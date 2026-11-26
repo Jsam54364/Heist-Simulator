@@ -1,0 +1,29 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Environment" path="res://assets/env/day_environment.tres" id="2_env"]
+[ext_resource type="Script" path="res://scripts/gameplay/follow_camera.gd" id="3_cam"]
+
+[node name="Main" type="Node3D"]
+script = ExtResource("1_main")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="." groups=["world_env"]]
+environment = ExtResource("2_env")
+
+[node name="Sun" type="DirectionalLight3D" parent="." groups=["sun"]]
+transform = Transform3D(-0.6691307, -0.5522643, 0.4972609, 0, 0.66913056, 0.74314487, -0.7431448, 0.49726105, -0.4477358, 0, 30, 0)
+light_color = Color(1, 0.95, 0.86, 1)
+light_energy = 1.55
+light_angular_distance = 0.6
+shadow_enabled = true
+shadow_bias = 0.04
+shadow_normal_bias = 1.2
+shadow_blur = 1.2
+directional_shadow_blend_splits = true
+directional_shadow_fade_start = 0.85
+directional_shadow_max_distance = 140.0
+
+[node name="Camera" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 80, 4, -8)
+current = true
+script = ExtResource("3_cam")
