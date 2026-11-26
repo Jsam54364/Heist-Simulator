@@ -169,7 +169,9 @@ func _run() -> void:
 			opened = true
 			break
 	check(truck_seen, "armored truck spawned (state %s)" % Game.robbery.truck.state)
-	check(opened, "vault opened for the delivery (vault %s, truck %s)" % [Game.robbery.vault.state, Game.robbery.truck.state])
+	var tg = Game.robbery.truck.guard
+	var gs: String = "none" if tg == null or not is_instance_valid(tg) else "%s ri=%s pos=%s" % [tg.state, tg.mem.get("ri"), tg.global_position]
+	check(opened, "vault opened for the delivery (vault %s, truck %s, guard %s, P dead=%s)" % [Game.robbery.vault.state, Game.robbery.truck.state, gs, P.dead])
 	# --- bank interior shot ---
 	Game.police.reset()
 	P.teleport(Vector3(25, 0, 12))
