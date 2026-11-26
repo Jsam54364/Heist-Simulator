@@ -155,8 +155,11 @@ func _run() -> void:
 		P.start_action(acts.actions[0], acts.target)
 		await wait(80)
 	check(Robbery.bag_value(Game.bag) > 0.0, "jewelry in bag (%s)" % U.money(Robbery.bag_value(Game.bag)))
-	# --- armored truck -> vault opens ---
+	# --- armored truck -> vault opens (unmasked, unarmed customer so the guards stay calm) ---
 	Game.police.reset()
+	if P.masked:
+		P.toggle_mask()
+	P.hp = 100.0
 	P.teleport(Vector3(25, 0, 12))
 	Game.robbery.truck.t = 0.5
 	var opened := false
