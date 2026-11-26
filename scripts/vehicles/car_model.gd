@@ -2,7 +2,7 @@ class_name CarModel
 extends RefCounted
 ## Procedural car bodies built from side-profile extrusions (placeholder art).
 ## Replace with .glb models later: Vehicle only needs `wheels` (pivot/spin
-## nodes + mount points), `paint_mat`, `tail_mat` and optional siren bars.
+## nodes + mount points), `paint_mat`, `body_mi` (tail lights via instance uniform) and optional siren bars.
 
 const PROFILES := {
 	"sedan": {"body": [[-2.3, 0.32], [2.3, 0.32], [2.3, 0.78], [2.12, 0.93], [0.98, 1.0], [-1.6, 1.02], [-2.24, 0.96], [-2.3, 0.78]], "cab": [[0.95, 0.98], [0.12, 1.42], [-1.0, 1.44], [-1.62, 1.0]], "roof": [-1.0, 0.12, 1.43]},
@@ -35,8 +35,17 @@ static func _shared() -> void:
 	shared.decal = dec
 	shared.tire = Mats.solid(Color("141414"), 0.9)
 	shared.hub = Mats.solid(Color("b9bdc2"), 0.25, 0.9)
-	# wheel: tyre + hub as one 2-surface mesh, axle along X
+	var pm := ShaderMaterial.new()
+	pm.shader = load("res://assets/shaders/car_parts.gdshader")
+	shared.parts = pm
+	# wheel: tyre + hub merged into ONE surface (vertex colours), axle along X; every
+	# car's wheels share mesh + material
 	wheel_mesh = ArrayMesh.new()
+	var wv := PackedVector3Array()
+	var wn := PackedVector3Array()
+	var wc := PackedColorArray()
+	var wu2 := PackedVector2Array()
+	var wi := PackedInt32Array()
 	var tire := CylinderMesh.new()
 	tire.top_radius = Vehicle.WHEEL_R
 	tire.bottom_radius = Vehicle.WHEEL_R
@@ -47,24 +56,42 @@ static func _shared() -> void:
 	hub.bottom_radius = 0.2
 	hub.height = 0.28
 	hub.radial_segments = 10
-	for cm in [tire, hub]:
-		var arr: Array = cm.get_mesh_arrays()
+	for part in [[tire, Color("141414"), Vector2(0.9, 0.0)], [hub, Color("b9bdc2"), Vector2(0.25, 0.9)]]:
+		var arr: Array = part[0].get_mesh_arrays()
 		var rot := Basis(Vector3.BACK, PI / 2)
 		var vs: PackedVector3Array = arr[Mesh.ARRAY_VERTEX]
 		var ns: PackedVector3Array = arr[Mesh.ARRAY_NORMAL]
+		var ids: PackedInt32Array = arr[Mesh.ARRAY_INDEX]
+		var base := wv.size()
 		for i in vs.size():
-			vs[i] = rot * vs[i]
-			ns[i] = rot * ns[i]
-		arr[Mesh.ARRAY_VERTEX] = vs
-		arr[Mesh.ARRAY_NORMAL] = ns
-		arr[Mesh.ARRAY_TANGENT] = null
-		wheel_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	wheel_mesh.surface_set_material(0, shared.tire)
-	wheel_mesh.surface_set_material(1, shared.hub)
+			wv.append(rot * vs[i])
+			wn.append(rot * ns[i])
+			var c: Color = part[1]
+			c.a = 0.0
+			wc.append(c)
+			wu2.append(part[2])
+		for i in ids:
+			wi.append(base + i)
+	var warr := []
+	warr.resize(Mesh.ARRAY_MAX)
+	warr[Mesh.ARRAY_VERTEX] = wv
+	warr[Mesh.ARRAY_NORMAL] = wn
+	warr[Mesh.ARRAY_COLOR] = wc
+	warr[Mesh.ARRAY_TEX_UV2] = wu2
+	warr[Mesh.ARRAY_INDEX] = wi
+	wheel_mesh.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, warr)
+	wheel_mesh.surface_set_material(0, pm)
 
 class Parts:
+	## small parts merged into one "parts" surface: colour, roughness, metal, emission class
+	const MERGE := {"trim": [Color("1b1d20"), 0.6, 0.0, 0.0], "black": [Color("121417"), 0.5, 0.0, 0.0],
+		"chrome": [Color("c9ccd0"), 0.15, 1.0, 0.0], "plate": [Color("f4f4f4"), 0.5, 0.0, 0.0],
+		"head": [Color("fff4d6"), 0.2, 0.0, 0.5], "tail": [Color("b01010"), 0.3, 0.0, 1.0],
+		"taxi": [Color("fff1a8"), 0.3, 0.0, 0.5], "stripe": [Color("d4ac0d"), 0.4, 0.0, 0.0]}
 	var sts := {}
 	func st(key: String) -> SurfaceTool:
+		if MERGE.has(key):
+			key = "parts"
 		if not sts.has(key):
 			var s := SurfaceTool.new()
 			s.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -76,8 +103,14 @@ class Parts:
 			var t := b
 			b = c
 			c = t
+		var m = MERGE.get(key)
 		for p in [a, b, c]:
 			s.set_normal(n)
+			if m != null:
+				var col: Color = m[0]
+				col.a = m[3]
+				s.set_color(col)
+				s.set_uv2(Vector2(m[1], m[2]))
 			s.add_vertex(p)
 	func box(key: String, size: Vector3, c: Vector3) -> void:
 		var hs := size * 0.5
@@ -149,9 +182,7 @@ static func build(v: Vehicle) -> void:
 	paint.clearcoat = 1.0
 	paint.clearcoat_roughness = 0.08
 	v.paint_mat = paint
-	var tail := Mats.solid(Color("b01010"), 0.3, 0.0, 0.8)
-	v.tail_mat = tail
-	var mats := {"paint": paint, "trim": shared.trim, "black": shared.black, "glass": shared.glass, "chrome": shared.chrome, "plate": shared.plate, "head": shared.head, "tail": tail, "taxi": shared.taxi, "decal": shared.decal, "stripe": Mats.solid(Color("d4ac0d"), 0.4)}
+	var mats := {"paint": paint, "glass": shared.glass, "decal": shared.decal, "parts": shared.parts}
 	var P := Parts.new()
 	var light_y := 0.7
 	if kind == "truck":
@@ -231,6 +262,7 @@ static func build(v: Vehicle) -> void:
 	var mi := MeshInstance3D.new()
 	mi.mesh = P.commit(mats)
 	body.add_child(mi)
+	v.body_mi = mi
 	# wheels: FL, FR, RL, RR
 	var wz: float = v.spec.wb / 2.0
 	for wp in [[1.0, 1.0], [-1.0, 1.0], [1.0, -1.0], [-1.0, -1.0]]:

@@ -423,6 +423,36 @@ func random_sidewalk() -> Vector3:
 		zs.append(r + 7.5)
 	return Vector3(along, 0, zs[randi() % zs.size()])
 
+## A sidewalk point within ~50 m of p (short walks = cheap paths, people stay local).
+func sidewalk_near(p: Vector3) -> Vector3:
+	var xs := []
+	var zs := []
+	for r in Game.ROAD_X:
+		for o in [-7.5, 7.5]:
+			if r == 150.0 and o > 0.0:
+				continue
+			if absf(r + o - p.x) < 55.0:
+				xs.append(r + o)
+	for r in Game.ROAD_Z:
+		for o in [-7.5, 7.5]:
+			if absf(r + o - p.z) < 55.0:
+				zs.append(r + o)
+	var best := random_sidewalk()
+	var bd := 1e9
+	for i in 6:
+		var q: Vector3
+		if (randf() < 0.5 or zs.is_empty()) and not xs.is_empty():
+			q = Vector3(xs[randi() % xs.size()], 0, clampf(p.z + randf_range(-40.0, 40.0), -140.0, 140.0))
+		elif not zs.is_empty():
+			q = Vector3(clampf(p.x + randf_range(-40.0, 40.0), -140.0, 140.0), 0, zs[randi() % zs.size()])
+		else:
+			continue
+		var d := U.d2(q, p)
+		if d > 6.0 and d < bd:
+			bd = d
+			best = q
+	return best
+
 func pedestrian(c: Character, dt: float) -> void:
 	var P = Game.player
 	var n = hear_noise(c)
@@ -455,8 +485,8 @@ func pedestrian(c: Character, dt: float) -> void:
 			c.mem.erase("dest")
 		return
 	if not c.mem.has("dest") or U.d2(c.global_position, c.mem.dest) < 1.0:
-		c.mem.dest = random_sidewalk()
-	c.nav_move(c.mem.dest, 1.4, dt, 4.0)
+		c.mem.dest = sidewalk_near(c.global_position)
+	c.nav_move(c.mem.dest, 1.4, dt, 6.0)
 
 func update(dt: float) -> void:
 	var P = Game.player
@@ -469,17 +499,28 @@ func update(dt: float) -> void:
 			continue
 		if c.hidden and c.role != "partner":
 			continue
-		if c.role != "partner" and c.role != "truckguard" and U.d2(c.global_position, P.global_position) > 160.0 and c.role == "pedestrian":
+		# AI LOD: people far from the player think 4x less often (with 4x the dt)
+		var dp := U.d2(c.global_position, P.global_position)
+		if c.role == "pedestrian" and dp > 160.0:
 			continue
-		perceive(c, dt)
+		var cdt := dt
+		if dp > 60.0 and c.role != "partner" and c.role != "truckguard":
+			c.ai_acc += dt
+			c.ai_n += 1
+			if c.ai_n < 4:
+				continue
+			cdt = c.ai_acc
+			c.ai_acc = 0.0
+			c.ai_n = 0
+		perceive(c, cdt)
 		match c.role:
-			"civilian": civilian(c, dt)
-			"teller", "staff": staff(c, dt)
-			"clerk": clerk(c, dt)
-			"guard": guard(c, dt)
-			"truckguard": truckguard(c, dt)
-			"partner": partner(c, dt)
-			"pedestrian", "driver": pedestrian(c, dt)
+			"civilian": civilian(c, cdt)
+			"teller", "staff": staff(c, cdt)
+			"clerk": clerk(c, cdt)
+			"guard": guard(c, cdt)
+			"truckguard": truckguard(c, cdt)
+			"partner": partner(c, cdt)
+			"pedestrian", "driver": pedestrian(c, cdt)
 			_: c.speed_now = 0.0
 	# auto-close doors the truck guard opened
 	for d in Game.doors:

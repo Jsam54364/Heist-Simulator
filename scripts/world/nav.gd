@@ -102,7 +102,19 @@ func line_free(a: Vector2i, b: Vector2i) -> bool:
 	return false
 
 ## Returns an Array of Vector3 waypoints (y = 0), or [] when unreachable.
+## A* searches allowed per physics tick (main resets it). Characters that miss out keep
+## following their old path and retry next tick, so a crowd replanning at once can't
+## stall a frame.
+var budget := 3
+var calls := 0
+func take_budget() -> bool:
+	if budget <= 0:
+		return false
+	budget -= 1
+	return true
+
 func find_path(from: Vector3, to: Vector3) -> Array:
+	calls += 1
 	var s := nearest_free(ci(from.x), cj(from.z))
 	var e := nearest_free(ci(to.x), cj(to.z))
 	if s.x < 0 or e.x < 0:

@@ -40,15 +40,15 @@ scenes/main.tscn            Root scene: WorldEnvironment, Sun, Camera (+ scripts
 assets/env/                 day_environment.tres - sky, tonemapping (AgX), glow, fog, SSAO...
 assets/materials/           ORMMaterial3D / StandardMaterial3D .tres (PBR: albedo + normal + ORM)
 assets/textures/            Generated PBR texture sets (tools/gen_assets.py)
-assets/shaders/             water.gdshader (ocean), minimap.gdshader (radar)
+assets/shaders/             city_uber (merged city material), far_city (HLOD), car_parts, water, minimap
 assets/audio/               Generated sound effects + loops
 scripts/autoload/           Game (state), Settings (quality presets), Sfx (audio)
-scripts/world/              City generator, robbery sites, merged-mesh builder, nav grid, road graph, materials
+scripts/world/              City generator, robbery sites, chunked mesh builder, LOD streamer, nav grid, road graph, materials
 scripts/actors/             Character, Player, NPC AI, Police
 scripts/vehicles/           Vehicle physics + procedural car models
 scripts/gameplay/           Robbery systems, traffic, FX, follow camera
 scripts/ui/                 HUD, touch controls, menus, map
-scripts/tests/              smoke.gd (headless gameplay test), shots.gd (screenshot tour)
+scripts/tests/              smoke.gd (headless gameplay test), shots.gd (screenshot tour), profile.gd (performance)
 tools/                      Asset generators (Python) and the environment generator
 .github/workflows/          Android APK build + smoke test
 android/debug.keystore      Shared debug key so APKs update in place (not secret: debug only)
@@ -59,14 +59,12 @@ android/debug.keystore      Shared debug key so APKs update in place (not secret
 - **Renderers:** Forward+ on desktop; Mobile renderer on Android (Vulkan). Android falls back to
   Compatibility (GLES3) automatically on very old phones.
 - **Quality presets** (`scripts/autoload/settings.gd`, Pause → Graphics): Low / Medium / High / Ultra control
-  MSAA/TAA/FXAA, render scale, shadow atlas size + cascades + distance, glow, fog distance and LOD.
+  MSAA/TAA, internal resolution, shadow atlas size + cascades + distance, glow, fog distance and LOD distances.
   SSAO, SSIL, SSR, SDFGI and volumetric fog switch on automatically on Forward+ (High/Ultra).
   Phones default to Medium, desktops to High.
 - **Materials are PBR** (albedo + normal + ORM) with per-instance vertex-colour tint, so a facade texture is
   reused across buildings. Swap any `assets/textures/*_albedo/_normal/_orm.png` for a scanned/photo texture
-  set and every building using it upgrades.
-- **Static geometry** is merged per 48 m chunk (one mesh per chunk, one surface per material): few draw
-  calls, working frustum culling, and each chunk stays under the Mobile renderer's 8-lights-per-mesh limit.
+  set, rerun `tools/gen_city_arrays.py` + `tools/gen_far_atlas.py`, and every building using it upgrades.
 - **Interiors** get warm ceiling lights and an interior ReflectionProbe (local ambient + reflections on
   marble/tile floors), so they are not lit by the blue sky.
 - **Next visual steps** (in rough order of payoff):
@@ -77,6 +75,41 @@ android/debug.keystore      Shared debug key so APKs update in place (not secret
   4. Day/night cycle: rotate the Sun, drive sky colours + street lamp emission from a time-of-day curve.
   5. To try Forward+ features on a high-end phone: Project Settings → Rendering → Renderer →
      `rendering_method.mobile` = `forward_plus`.
+
+## Performance: how the world stays fast on phones
+
+- **World LOD streaming** (`scripts/world/world_streamer.gd`): the city is cut into 50 m chunks
+  (one block each). Around the camera each chunk's layers are built into meshes on demand, within a
+  2.5 ms-per-frame budget, and freed again when you move away:
+  `detail` props (~45 m) → `interior` rooms (~65 m) → full-detail `main` buildings and streets (~95 m)
+  → `mid` palms/poles (~130 m). Beyond that every block is a **far HLOD**: one textured box per
+  building plus flat ground, one draw call per block, using a 4×2 texture atlas and a cheap shader.
+  Radii scale with the graphics preset.
+- **Merged city material** (`assets/shaders/city_uber.gdshader`): 26 surface types (facades,
+  asphalt, sidewalks, marble, paint, foliage...) live in three Texture2DArrays, so a whole block
+  renders in one draw call instead of ~20. Car trim/lights/wheels share one material too
+  (`car_parts.gdshader`), and far people are one mesh instead of three.
+- **Occlusion culling**: every building is an occluder, so blocks hidden behind other blocks
+  (and the people/cars in them) aren't drawn. Enterable shops only occlude above the ground floor.
+- **Lighting cost**: room lights only affect rooms and people (render layers) and fade out with
+  distance; small props don't cast shadows; people/cars drop shadows and detail with distance.
+- **Actor LOD**: far people animate at half/quarter rate, think 4× less often and move without
+  collision; far traffic rides its lane kinematically instead of simulating suspension; parked cars
+  sleep; A* path searches are capped per tick and pedestrians take short local walks.
+- **Resolution**: each preset targets an internal 3D height (Low 540p, Medium 720p, High 900p), so
+  phones with very high-res screens don't render millions of extra pixels. **Auto resolution**
+  (Pause menu) drops the 3D scale when the frame rate dips and raises it back when there's headroom.
+  Frame rate can be capped at 60 or 30 (battery saver). Physics is capped at 3 steps per frame so a
+  slow frame can't snowball.
+- **Memory**: reflection atlas and shadow atlases sized for mobile (VRAM 434 MB → ~270 MB measured
+  on desktop settings; less on phones).
+- Turn on **Show FPS** in the pause menu to see fps, the current 3D scale and how many chunks are
+  loaded / far / still loading.
+
+Profiling: `godot --headless --path . --fixed-fps 60 res://scenes/tests/profile.tscn` prints script
+time per system; run it with a display (`-- medium`) to also get draw calls / primitives / VRAM.
+After changing textures run `tools/gen_assets.py`, `tools/gen_city_arrays.py`,
+`tools/gen_far_atlas.py`, then `tools/write_imports.py`.
 
 ## Building
 

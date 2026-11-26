@@ -34,6 +34,9 @@ pointing/emulate_mouse_from_touch=true
 
 [layer_names]
 
+3d_render/layer_1="world"
+3d_render/layer_2="interiors"
+3d_render/layer_3="characters"
 3d_physics/layer_1="world"
 3d_physics/layer_2="glass"
 3d_physics/layer_3="vehicles"
@@ -45,6 +48,7 @@ pointing/emulate_mouse_from_touch=true
 3d/physics_engine="Jolt Physics"
 common/physics_ticks_per_second=60
 common/physics_interpolation=true
+common/max_physics_steps_per_frame=3
 
 [rendering]
 
@@ -52,9 +56,16 @@ renderer/rendering_method="forward_plus"
 renderer/rendering_method.mobile="mobile"
 textures/vram_compression/import_etc2_astc=true
 textures/default_filters/anisotropic_filtering_level=3
+textures/default_filters/anisotropic_filtering_level.mobile=2
 lights_and_shadows/directional_shadow/size=4096
 lights_and_shadows/directional_shadow/size.mobile=2048
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality=3
 lights_and_shadows/directional_shadow/soft_shadow_filter_quality.mobile=1
 environment/defaults/default_clear_color=Color(0.91, 0.86, 0.79, 1)
-anti_aliasing/quality/msaa_3d=2
+anti_aliasing/quality/msaa_3d=1
+occlusion_culling/use_occlusion_culling=true
+reflections/reflection_atlas/reflection_count=16
+reflections/reflection_atlas/reflection_size=256
+reflections/reflection_atlas/reflection_size.mobile=128
+lights_and_shadows/positional_shadow/atlas_size=1024
+lights_and_shadows/positional_shadow/atlas_size.mobile=512

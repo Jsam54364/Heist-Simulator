@@ -156,7 +156,11 @@ func _run() -> void:
 		await wait(80)
 	check(Robbery.bag_value(Game.bag) > 0.0, "jewelry in bag (%s)" % U.money(Robbery.bag_value(Game.bag)))
 	# --- armored truck -> vault opens (unmasked, unarmed customer so the guards stay calm) ---
+	if P.dead:
+		main.respawn()
 	Game.police.reset()
+	for s in Game.sites:
+		s.alarm_triggered = false
 	if P.masked:
 		P.toggle_mask()
 	P.hp = 100.0
@@ -173,7 +177,7 @@ func _run() -> void:
 			break
 	check(truck_seen, "armored truck spawned (state %s)" % Game.robbery.truck.state)
 	var tg = Game.robbery.truck.guard
-	var gs: String = "none" if tg == null or not is_instance_valid(tg) else "%s ri=%s pos=%s" % [tg.state, tg.mem.get("ri"), tg.global_position]
+	var gs: String = "none" if tg == null or not is_instance_valid(tg) else "%s ri=%s pos=%s ko=%s dead=%s" % [tg.state, tg.mem.get("ri"), tg.global_position, tg.ko, tg.dead]
 	check(opened, "vault opened for the delivery (vault %s, truck %s, guard %s, P dead=%s)" % [Game.robbery.vault.state, Game.robbery.truck.state, gs, P.dead])
 	# --- bank interior shot ---
 	Game.police.reset()

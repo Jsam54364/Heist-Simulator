@@ -31,6 +31,12 @@ func update(dt: float) -> void:
 		if U.d2(car.global_position, tgt) < 5.0:
 			ai.idx = (ai.idx + 1) % ai.pts.size()
 		var f: Vector3 = car.fwd_dir()
+		# the "anything ahead of me?" scan is the expensive part: refresh it every 3rd tick
+		ai.scan_n = ai.get("scan_n", randi() % 3) + 1
+		if ai.scan_n < 3 and ai.has("blocked"):
+			_drive(car, ai, ai.blocked, dt, P)
+			continue
+		ai.scan_n = 0
 		var blocked := false
 		for o in Game.cars:
 			if o == car:
@@ -53,14 +59,30 @@ func update(dt: float) -> void:
 					break
 		if Game.wanted.stars >= 3 and U.d2(P.global_position, car.global_position) < 30.0:
 			blocked = false
-		var nxt: Vector3 = ai.pts[(ai.idx + 1) % ai.pts.size()]
-		car.drive_to(ai.pts[ai.idx], 0.0 if blocked else 12.0, dt, {"arrive": false, "stop": blocked, "next": nxt})
+		ai.blocked = blocked
+		_drive(car, ai, blocked, dt, P)
+
+func _drive(car: Vehicle, ai: Dictionary, blocked: bool, dt: float, P) -> void:
+	# physics LOD: far from the camera/player the car rides its lane kinematically
+	var cam_p: Vector3 = Game.main.camera.global_position
+	var far: bool = U.d2(cam_p, car.global_position) > 125.0 and U.d2(P.global_position, car.global_position) > 125.0
+	car.set_rail(far, 0.0 if blocked else 10.0)
+	if car.rail:
+		_rail_step(car, ai, 0.0 if blocked else 10.0, dt)
+		return
+	var nxt: Vector3 = ai.pts[(ai.idx + 1) % ai.pts.size()]
+	car.drive_to(ai.pts[ai.idx], 0.0 if blocked else 12.0, dt, {"arrive": false, "stop": blocked, "next": nxt})
 
 func contacts() -> void:
 	# cars ignore people physically (so a cop standing in the road can't flip a truck);
-	# people get pushed out of car footprints and knocked down by fast cars
+	# people get pushed out of car footprints and knocked down by fast cars.
+	# Parked/sleeping/kinematic-rail cars can't run anyone over, so they're skipped.
 	for car in Game.cars:
+		if car.rail or car.sleeping:
+			continue
 		var sp: float = car.linear_velocity.length()
+		if sp < 0.8:
+			continue
 		var f: Vector3 = car.fwd_dir()
 		f.y = 0
 		f = f.normalized()
@@ -88,3 +110,16 @@ func contacts() -> void:
 				if sp > 6.0 and not c.dead and not c.ko and Game.t - c.mem.get("hit_by_car_t", -9.0) > 1.0:
 					c.mem.hit_by_car_t = Game.t
 					Game.main.on_run_over(c, car, sp)
+
+func _rail_step(car: Vehicle, ai: Dictionary, speed: float, dt: float) -> void:
+	var p := car.global_position
+	var tgt: Vector3 = ai.pts[ai.idx]
+	var to := Vector3(tgt.x - p.x, 0, tgt.z - p.z)
+	var dist := to.length()
+	if dist < 0.01:
+		return
+	var dir := to / dist
+	var yaw := car.yaw()
+	yaw += U.ang_diff(yaw, atan2(dir.x, dir.z)) * minf(1.0, dt * 3.0)
+	var np := p + U.fwd(yaw) * minf(speed * dt, dist)
+	car.global_transform = Transform3D(Basis(Vector3.UP, yaw), Vector3(np.x, p.y, np.z))

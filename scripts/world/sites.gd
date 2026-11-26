@@ -104,6 +104,9 @@ func upper(x1: float, x2: float, z1: float, z2: float, floors: int, mat: Materia
 	for ac in [[cx - w / 4, cz], [cx + w / 4, cz - d / 5]]:
 		B.box(ac[0], top, ac[1], 1.6, 1.1, 1.2, paint, {"color": col(0xb9bdc2), "collide": false})
 	B.add_col(Vector3(x1 - 0.15, 4, z1 - 0.15), Vector3(x2 + 0.15, top + 1, z2 + 0.15))
+	# far LOD: ground floor as a shopfront band + facade above; occlude only the upper
+	# floors so the open ground-floor interior never hides what's behind its windows
+	B.building_volume(Vector3(x1, 0, z1), Vector3(x2, top, z2), Mats.far_cell(mat), color, 4.0, 4.2)
 
 func lights(x1: float, x2: float, z1: float, z2: float, step := 3.2) -> void:
 	var x := x1 + step / 2
@@ -134,6 +137,12 @@ func interior_light(x1: float, x2: float, z1: float, z2: float) -> void:
 			l.omni_range = maxf(w / nx, d / nz) * 1.05 + 1.5
 			l.omni_attenuation = 0.8
 			l.shadow_enabled = false
+			# only rooms + people are lit (streets aren't paying for room lights), and
+			# lights switch off with distance
+			l.light_cull_mask = 2 | 4
+			l.distance_fade_enabled = true
+			l.distance_fade_begin = 40.0
+			l.distance_fade_length = 12.0
 			l.add_to_group("interior_light")
 			parent.add_child(l)
 	var rp := ReflectionProbe.new()
@@ -146,6 +155,9 @@ func interior_light(x1: float, x2: float, z1: float, z2: float) -> void:
 	rp.ambient_color_energy = 0.55
 	rp.update_mode = ReflectionProbe.UPDATE_ONCE
 	rp.max_distance = 30.0
+	if "reflection_mask" in rp:
+		rp.set("reflection_mask", 2 | 4)
+	rp.add_to_group("interior_probe")
 	parent.add_child(rp)
 
 func products(x1: float, x2: float, y: float, z: float, depth: float, face: float) -> void:
@@ -827,7 +839,13 @@ func build_spray() -> void:
 	z.position = Vector3(70, 0.2, 18.5)
 	Game.world.add_child(z)
 
+## Ground-floor rooms of enterable buildings. Geometry inside them goes to the
+## "interior" LOD layer / render layer, which only room lights and room probes affect.
+const INTERIORS := [Rect2(12, -21, 16, 12), Rect2(-34, -23, 18, 14), Rect2(13, 9, 24, 22), Rect2(-80, -21, 16, 12),
+	Rect2(66, -24, 16, 15), Rect2(-40, 12, 26, 26), Rect2(64, 12, 12, 12)]
+
 func build() -> void:
+	B.interior_rects = INTERIORS.duplicate()
 	build_store()
 	build_jewelry()
 	build_bank()

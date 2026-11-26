@@ -27,6 +27,7 @@ func _frames(n: int) -> void:
 
 func _run() -> void:
 	await _frames(3)
+	Settings.auto_res = false
 	Settings.apply()
 	main.hud._start_game()
 	var P: Player = Game.player

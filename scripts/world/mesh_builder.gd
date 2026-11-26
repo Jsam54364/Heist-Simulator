@@ -1,11 +1,28 @@
 class_name MeshBuilder
 extends RefCounted
-## Accumulates static geometry per material (one draw call per material) and
-## creates box colliders. Every box keeps its world-space AABB in `cols` so
-## navigation, line-of-sight helpers and the minimap can use the same data.
+## Collects the city's static geometry into streamable chunks and creates the box
+## colliders. Nothing is turned into GPU meshes here: WorldStreamer builds chunk meshes
+## on demand (and frees them again) depending on how far the camera is.
+##
+## Chunks are 50 m squares aligned to the road grid (roads every 50 m), so one chunk is
+## one city block plus half of the surrounding streets - ideal for occlusion culling.
+## Each chunk holds several LOD layers:
+##   main      building shells, sidewalks, road segments, big structures   (near range)
+##   interior  rooms of enterable sites (own visual layer, lit by room lights)
+##   mid       tall thin things that read from far away: palms, poles, pilasters
+##   detail    small props: benches, signs, AC units, trims, shop products
+## plus a records list (`far_boxes`, `far_ground`) used to build the far HLOD mesh.
 
-var surfaces := {}
-var cols: Array = []          # {min: Vector3, max: Vector3, glass: bool, solid: bool, tag}
+const CHUNK := 50.0
+const LAYERS := ["main", "interior", "mid", "detail"]
+const MID_MATS := ["leaf", "trunk", "lamp_glow"]
+
+var chunks := {}               # Vector2i -> {"parts": {key: part}, "verts": int}
+var cols: Array = []           # {min, max, glass, solid, tag, ground}
+var far_boxes: Array = []      # {min: Vector3, max: Vector3, cell: int, color: Color, ground_floor: float}
+var far_ground: Array = []     # {rect: Rect2, y: float, color: Color}
+var occluders: Array = []      # {min: Vector3, max: Vector3}
+var interior_rects: Array = [] # Rect2 (xz) of enterable rooms, ground floor only
 var world_body: StaticBody3D
 var glass_body: StaticBody3D
 var ground_body: StaticBody3D
@@ -33,43 +50,132 @@ func _body(parent: Node3D, n: String, layer: int) -> StaticBody3D:
 	parent.add_child(b)
 	return b
 
-## Geometry is merged per (spatial chunk, material, shadow flag): few draw calls, but
-## chunks still frustum-cull, and each chunk only touches nearby lights (the Mobile
-## renderer allows 8 omni/spot lights per mesh instance).
-const CHUNK := 48.0
+static func chunk_of(p: Vector3) -> Vector2i:
+	return Vector2i(int(floor(p.x / CHUNK)), int(floor(p.z / CHUNK)))
 
-func _surf(mat: Material, shadow: bool, at: Vector3) -> Dictionary:
-	var ck := Vector2i(int(floor(at.x / CHUNK)), int(floor(at.z / CHUNK)))
-	var key := "%d_%s_%d_%d" % [mat.get_instance_id(), shadow, ck.x, ck.y]
-	if not surfaces.has(key):
-		surfaces[key] = {"mat": mat, "shadow": shadow, "chunk": ck, "v": PackedVector3Array(), "n": PackedVector3Array(), "uv": PackedVector2Array(), "c": PackedColorArray(), "i": PackedInt32Array()}
-	return surfaces[key]
+static func chunk_rect(ck: Vector2i) -> Rect2:
+	return Rect2(ck.x * CHUNK, ck.y * CHUNK, CHUNK, CHUNK)
 
-## Take a surface's arrays out of the dictionary (so appends don't copy), then put them back.
+## Materials in CityLayers.INDEX all share one part per (chunk, layer, shadow) drawn with
+## the merged city_uber material; the per-vertex UV2.x says which texture layer to use.
+var cur_uber := -1.0
+
+func _part(mat: Material, shadow: bool, layer: String, at: Vector3) -> Dictionary:
+	var ck := chunk_of(at)
+	if not chunks.has(ck):
+		chunks[ck] = {"parts": {}, "verts": 0}
+	var parts: Dictionary = chunks[ck].parts
+	var mn := str(mat.resource_name)
+	var uber := CityLayers.INDEX.has(mn)
+	cur_uber = float(CityLayers.INDEX[mn]) if uber else -1.0
+	var draw_mat: Material = Mats.uber() if uber else mat
+	# one part per (layer, material): splitting by shadow flag doubled the instance count;
+	# whether a layer casts shadows is decided per layer by WorldStreamer
+	var key := "%s|%d" % [layer, draw_mat.get_instance_id()]
+	if not parts.has(key):
+		parts[key] = {"mat": draw_mat, "shadow": shadow, "layer": layer, "uber": uber, "v": PackedVector3Array(), "n": PackedVector3Array(),
+			"t": PackedFloat32Array(), "uv": PackedVector2Array(), "uv2": PackedVector2Array(), "c": PackedColorArray(), "i": PackedInt32Array()}
+	return parts[key]
+
+func _fill_uv2(s: Dictionary) -> void:
+	if not s.uber:
+		return
+	var u2: PackedVector2Array = s.uv2
+	s.uv2 = PackedVector2Array()
+	var want: int = s.v.size()
+	var l := Vector2(cur_uber, 0)
+	while u2.size() < want:
+		u2.append(l)
+	s.uv2 = u2
+
+## Take a part's arrays out of its dictionary (so appends don't copy), then put them back.
 func _take(s: Dictionary) -> Array:
-	var a := [s.v, s.n, s.uv, s.c, s.i]
-	s.v = PackedVector3Array(); s.n = PackedVector3Array(); s.uv = PackedVector2Array(); s.c = PackedColorArray(); s.i = PackedInt32Array()
+	var a := [s.v, s.n, s.uv, s.c, s.i, s.t]
+	s.v = PackedVector3Array(); s.n = PackedVector3Array(); s.uv = PackedVector2Array(); s.c = PackedColorArray(); s.i = PackedInt32Array(); s.t = PackedFloat32Array()
 	return a
 
 func _put(s: Dictionary, a: Array) -> void:
-	s.v = a[0]; s.n = a[1]; s.uv = a[2]; s.c = a[3]; s.i = a[4]
+	s.v = a[0]; s.n = a[1]; s.uv = a[2]; s.c = a[3]; s.i = a[4]; s.t = a[5]
+
+func _in_interior(p: Vector3, w := 0.0, d := 0.0) -> bool:
+	if p.y > 4.0:
+		return false
+	var fp := Rect2(p.x - w * 0.5, p.z - d * 0.5, w, d)
+	for r in interior_rects:
+		if r.grow(0.4).encloses(fp):
+			return true
+	return false
+
+func _classify(mat: Material, center: Vector3, w: float, h: float, d: float, opts: Dictionary) -> String:
+	var lod: String = opts.get("lod", "")
+	if lod != "":
+		return lod
+	if _in_interior(center, w, d):
+		return "interior"
+	if str(mat.resource_name) in MID_MATS:
+		return "mid"
+	if opts.get("layer", "") == "ground":
+		return "main"
+	var foot := maxf(w, d)
+	if maxf(foot, h) < 2.6:
+		return "detail"
+	if foot < 1.2 and h >= 2.6:
+		return "mid"
+	return "main"
 
 ## Box with base at y. opts: color, tile (Vector2 metres per texture repeat), basis (rotation),
-## collide (bool, default true), layer ("world"|"glass"|"ground"), shadow (bool), tag
+## collide (bool, default true), layer ("world"|"glass"|"ground"), shadow (bool), tag, lod
 func box(cx: float, y: float, cz: float, w: float, h: float, d: float, mat: Material, opts := {}) -> Dictionary:
+	var basis: Basis = opts.get("basis", Basis.IDENTITY)
+	var res := {}
+	if opts.get("collide", true):
+		res = add_col(Vector3(cx - w * 0.5, y, cz - d * 0.5), Vector3(cx + w * 0.5, y + h, cz + d * 0.5), opts)
+	# long axis-aligned boxes (roads, lines, beach strips) are split at chunk borders so
+	# every chunk mesh stays compact for culling and streaming
+	if basis == Basis.IDENTITY and (w > CHUNK * 0.6 or d > CHUNK * 0.6):
+		var xs := _cuts(cx - w * 0.5, cx + w * 0.5)
+		var zs := _cuts(cz - d * 0.5, cz + d * 0.5)
+		if xs.size() > 2 or zs.size() > 2:
+			for i in xs.size() - 1:
+				for j in zs.size() - 1:
+					_box_geom((xs[i] + xs[i + 1]) * 0.5, y, (zs[j] + zs[j + 1]) * 0.5, xs[i + 1] - xs[i], h, zs[j + 1] - zs[j], mat, opts, basis)
+			_record_far_ground(cx, y, cz, w, h, d, mat, opts)
+			return res
+	_box_geom(cx, y, cz, w, h, d, mat, opts, basis)
+	_record_far_ground(cx, y, cz, w, h, d, mat, opts)
+	return res
+
+func _cuts(a: float, b: float) -> Array:
+	var out := [a]
+	var k := floorf(a / CHUNK) + 1.0
+	while k * CHUNK < b - 0.01:
+		out.append(k * CHUNK)
+		k += 1.0
+	out.append(b)
+	return out
+
+func _box_geom(cx: float, y: float, cz: float, w: float, h: float, d: float, mat: Material, opts: Dictionary, basis: Basis) -> void:
 	var tile: Vector2 = opts.get("tile", Mats.tile_of(mat))
 	var col: Color = opts.get("color", Color.WHITE)
-	var basis: Basis = opts.get("basis", Basis.IDENTITY)
 	var center := Vector3(cx, y + h * 0.5, cz)
 	var hs := Vector3(w * 0.5, h * 0.5, d * 0.5)
-	var s := _surf(mat, opts.get("shadow", true), center)
+	var layer := _classify(mat, center, w, h, d, opts)
+	var s := _part(mat, opts.get("shadow", true), layer, center)
 	var a := _take(s)
 	var v: PackedVector3Array = a[0]
 	var n: PackedVector3Array = a[1]
 	var uv: PackedVector2Array = a[2]
 	var c: PackedColorArray = a[3]
 	var idx: PackedInt32Array = a[4]
-	for f in FACES:
+	var tg: PackedFloat32Array = a[5]
+	# boxes resting on the ground never show their underside, and paper-thin boxes
+	# (road markings, floor finishes) only need their top face
+	var skip_bottom := basis == Basis.IDENTITY and y <= 0.2
+	var top_only := basis == Basis.IDENTITY and h <= 0.05 and y <= 0.3
+	for fi in 6:
+		if (fi == 3 and skip_bottom) or (top_only and fi != 2):
+			continue
+		var f: Array = FACES[fi]
 		var nn: Vector3 = f[0]
 		var r: Vector3 = f[1]
 		var up: Vector3 = f[2]
@@ -80,24 +186,36 @@ func box(cx: float, y: float, cz: float, w: float, h: float, d: float, mat: Mate
 		var tv := fh / (tile.x if top_face else tile.y)
 		var base := v.size()
 		var wn := basis * nn
+		var wt := basis * r
 		v.append(basis * ((nn - r + up) * hs) + center)
 		v.append(basis * ((nn + r + up) * hs) + center)
 		v.append(basis * ((nn + r - up) * hs) + center)
 		v.append(basis * ((nn - r - up) * hs) + center)
-		n.append(wn); n.append(wn); n.append(wn); n.append(wn)
+		for k in 4:
+			n.append(wn)
+			c.append(col)
+			tg.append(wt.x); tg.append(wt.y); tg.append(wt.z); tg.append(1.0)
 		uv.append(Vector2(0, 0)); uv.append(Vector2(tu, 0)); uv.append(Vector2(tu, tv)); uv.append(Vector2(0, tv))
-		c.append(col); c.append(col); c.append(col); c.append(col)
 		idx.append(base); idx.append(base + 1); idx.append(base + 2)
 		idx.append(base); idx.append(base + 2); idx.append(base + 3)
-	_put(s, [v, n, uv, c, idx])
-	var res := {}
-	if opts.get("collide", true):
-		res = add_col(Vector3(cx - w * 0.5, y, cz - d * 0.5), Vector3(cx + w * 0.5, y + h, cz + d * 0.5), opts)
-	return res
+	_put(s, [v, n, uv, c, idx, tg])
+	_fill_uv2(s)
+
+## Flat ground pieces (roads, sidewalks, sand, grass) feed the far HLOD ground.
+const GROUND_MATS := {"asphalt": Color(0.2, 0.2, 0.21), "sidewalk": Color(0.55, 0.55, 0.54), "sand": Color(0.78, 0.7, 0.55),
+	"grass": Color(0.27, 0.42, 0.2), "wood_planks": Color(0.45, 0.33, 0.22), "concrete": Color(0.5, 0.5, 0.48), "checker_floor": Color(0.6, 0.6, 0.6)}
+func _record_far_ground(cx: float, y: float, cz: float, w: float, h: float, d: float, mat: Material, opts: Dictionary) -> void:
+	var mn := str(mat.resource_name)
+	if h > 0.3 or w < 3.0 or d < 3.0 or not GROUND_MATS.has(mn) or opts.has("basis"):
+		return
+	if _in_interior(Vector3(cx, y, cz), w, d):
+		return
+	var col: Color = GROUND_MATS[mn] * opts.get("color", Color.WHITE)
+	far_ground.append({"rect": Rect2(cx - w * 0.5, cz - d * 0.5, w, d), "y": y + h, "color": col})
 
 ## Single textured quad facing yaw (outward normal = U.fwd(yaw)); uv rect in 0..1
 func quad(center: Vector3, w: float, h: float, yaw: float, mat: Material, uv0: Vector2, uv1: Vector2, opts := {}) -> void:
-	var s := _surf(mat, opts.get("shadow", false), center)
+	var s := _part(mat, opts.get("shadow", false), opts.get("lod", "detail"), center)
 	var a := _take(s)
 	var nn := U.fwd(yaw)
 	var r := Vector3(nn.z, 0, -nn.x)
@@ -109,16 +227,24 @@ func quad(center: Vector3, w: float, h: float, yaw: float, mat: Material, uv0: V
 	a[0].append(center + r * w * 0.5 - up * h * 0.5)
 	a[0].append(center - r * w * 0.5 - up * h * 0.5)
 	for k in 4:
-		a[1].append(nn); a[3].append(col)
+		a[1].append(nn)
+		a[3].append(col)
+		a[5].append(r.x); a[5].append(r.y); a[5].append(r.z); a[5].append(1.0)
 	a[2].append(uv0); a[2].append(Vector2(uv1.x, uv0.y)); a[2].append(uv1); a[2].append(Vector2(uv0.x, uv1.y))
 	a[4].append_array(PackedInt32Array([base, base + 1, base + 2, base, base + 2, base + 3]))
 	_put(s, a)
+	_fill_uv2(s)
 
 ## Vertical cylinder (or cone when r_top = 0) with base at y
 func cylinder(cx: float, y: float, cz: float, r: float, h: float, mat: Material, color := Color.WHITE, seg := 10, r_top := -1.0, opts := {}) -> void:
 	if r_top < 0.0:
 		r_top = r
-	var s := _surf(mat, opts.get("shadow", true), Vector3(cx, y, cz))
+	var lod: String = opts.get("lod", "")
+	if lod == "" and _in_interior(Vector3(cx, y + h * 0.5, cz), r * 2.0, r * 2.0):
+		lod = "interior"
+	if lod == "":
+		lod = "mid" if (str(mat.resource_name) in MID_MATS or (r < 0.6 and h >= 2.6)) else ("detail" if h < 2.6 and r < 1.5 else "main")
+	var s := _part(mat, opts.get("shadow", true), lod, Vector3(cx, y, cz))
 	var a := _take(s)
 	var base: int = a[0].size()
 	var slope := (r - r_top) / h
@@ -127,20 +253,29 @@ func cylinder(cx: float, y: float, cz: float, r: float, h: float, mat: Material,
 		var dx := cos(ang)
 		var dz := sin(ang)
 		var nn := Vector3(dx, slope, dz).normalized()
-		a[0].append(Vector3(cx + dx * r, y, cz + dz * r)); a[1].append(nn); a[2].append(Vector2(float(k) / seg, 1)); a[3].append(color)
-		a[0].append(Vector3(cx + dx * r_top, y + h, cz + dz * r_top)); a[1].append(nn); a[2].append(Vector2(float(k) / seg, 0)); a[3].append(color)
+		for top in 2:
+			var rr := r_top if top else r
+			a[0].append(Vector3(cx + dx * rr, y + (h if top else 0.0), cz + dz * rr))
+			a[1].append(nn)
+			a[2].append(Vector2(float(k) / seg, 0.0 if top else 1.0))
+			a[3].append(color)
+			a[5].append(-dz); a[5].append(0.0); a[5].append(dx); a[5].append(-1.0)
 	for k in seg:
 		var a0 := base + k * 2
 		a[4].append_array(PackedInt32Array([a0, a0 + 2, a0 + 1, a0 + 1, a0 + 2, a0 + 3]))
 	if r_top > 0.0:
 		var cidx: int = a[0].size()
-		a[0].append(Vector3(cx, y + h, cz)); a[1].append(Vector3.UP); a[2].append(Vector2(0.5, 0.5)); a[3].append(color)
-		for k in seg + 1:
-			var ang := TAU * k / seg
-			a[0].append(Vector3(cx + cos(ang) * r_top, y + h, cz + sin(ang) * r_top)); a[1].append(Vector3.UP); a[2].append(Vector2(0.5, 0.5)); a[3].append(color)
+		for k in seg + 2:
+			var p := Vector3(cx, y + h, cz)
+			if k > 0:
+				var ang := TAU * (k - 1) / seg
+				p += Vector3(cos(ang) * r_top, 0, sin(ang) * r_top)
+			a[0].append(p); a[1].append(Vector3.UP); a[2].append(Vector2(0.5, 0.5)); a[3].append(color)
+			a[5].append(1.0); a[5].append(0.0); a[5].append(0.0); a[5].append(1.0)
 		for k in seg:
 			a[4].append_array(PackedInt32Array([cidx, cidx + 1 + k, cidx + 2 + k]))
 	_put(s, a)
+	_fill_uv2(s)
 
 func add_col(minv: Vector3, maxv: Vector3, opts := {}) -> Dictionary:
 	var layer: String = opts.get("layer", "world")
@@ -160,33 +295,31 @@ func add_col(minv: Vector3, maxv: Vector3, opts := {}) -> Dictionary:
 	colinfo["shape"] = cs
 	return colinfo
 
-func finalize(parent: Node3D) -> void:
-	var meshes := {}
-	for key in surfaces:
-		var s: Dictionary = surfaces[key]
-		if s.v.is_empty():
+## Far-LOD + occluder record for a building volume (called by the city/site generators).
+## cell: index into far_atlas.png (0 stucco, 1 brick, 2 office, 3 glass, 4 shopfront, 5 roof)
+func building_volume(minv: Vector3, maxv: Vector3, cell: int, color: Color, ground_floor := 0.0, occlude_from := 0.0) -> void:
+	far_boxes.append({"min": minv, "max": maxv, "cell": cell, "color": color, "ground_floor": ground_floor})
+	if occlude_from < maxv.y - 2.0:
+		occluders.append({"min": Vector3(minv.x + 0.3, maxf(minv.y, occlude_from), minv.z + 0.3), "max": Vector3(maxv.x - 0.3, maxv.y - 0.2, maxv.z - 0.3)})
+
+## Packs a chunk layer into mesh arrays (one surface per material). Returns [] if empty.
+func layer_surfaces(ck: Vector2i, layer: String) -> Array:
+	var out := []
+	if not chunks.has(ck):
+		return out
+	for key in chunks[ck].parts:
+		var s: Dictionary = chunks[ck].parts[key]
+		if s.layer != layer or s.v.is_empty():
 			continue
 		var arrays := []
 		arrays.resize(Mesh.ARRAY_MAX)
 		arrays[Mesh.ARRAY_VERTEX] = s.v
 		arrays[Mesh.ARRAY_NORMAL] = s.n
+		arrays[Mesh.ARRAY_TANGENT] = s.t
 		arrays[Mesh.ARRAY_TEX_UV] = s.uv
 		arrays[Mesh.ARRAY_COLOR] = s.c
 		arrays[Mesh.ARRAY_INDEX] = s.i
-		var st := SurfaceTool.new()
-		st.create_from_arrays(arrays)
-		st.generate_tangents()
-		var mkey := "%d_%d_%s" % [s.chunk.x, s.chunk.y, s.shadow]
-		if not meshes.has(mkey):
-			meshes[mkey] = {"mesh": ArrayMesh.new(), "shadow": s.shadow, "chunk": s.chunk}
-		var mesh: ArrayMesh = meshes[mkey].mesh
-		st.commit(mesh)
-		mesh.surface_set_material(mesh.get_surface_count() - 1, s.mat)
-	for mkey in meshes:
-		var m: Dictionary = meshes[mkey]
-		var mi := MeshInstance3D.new()
-		mi.mesh = m.mesh
-		mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_ON if m.shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		mi.name = "Chunk_%d_%d%s" % [m.chunk.x, m.chunk.y, "" if m.shadow else "_ns"]
-		parent.add_child(mi)
-	surfaces.clear()
+		if s.uber:
+			arrays[Mesh.ARRAY_TEX_UV2] = s.uv2
+		out.append({"arrays": arrays, "mat": s.mat})
+	return out

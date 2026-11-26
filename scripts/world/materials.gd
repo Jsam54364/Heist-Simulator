@@ -68,3 +68,36 @@ static func _make(name: String) -> Material:
 			return w
 	push_warning("Unknown material " + name)
 	return solid(Color.MAGENTA)
+
+
+## Cell in assets/textures/far_atlas.png used by the far HLOD for a facade material.
+const FAR_CELLS := {"facade_stucco": 0, "facade_brick": 1, "facade_office": 2, "facade_glass": 3, "shopfront": 4, "roof_gravel": 5}
+static func far_cell(mat: Material) -> int:
+	return FAR_CELLS.get(str(mat.resource_name), 0)
+
+
+## The merged city material (see assets/shaders/city_uber.gdshader). Surfaces whose
+## material is in CityLayers.INDEX are drawn with it.
+static var _uber: ShaderMaterial
+static func uber() -> ShaderMaterial:
+	if _uber:
+		return _uber
+	_uber = ShaderMaterial.new()
+	_uber.resource_name = "city_uber"
+	_uber.shader = load("res://assets/shaders/city_uber.gdshader")
+	_uber.set_shader_parameter("albedo_arr", load("res://assets/textures/city_albedo_array.png"))
+	_uber.set_shader_parameter("normal_arr", load("res://assets/textures/city_normal_array.png"))
+	_uber.set_shader_parameter("orm_arr", load("res://assets/textures/city_orm_array.png"))
+	var params := []
+	var tints := []
+	for i in 32:
+		if i < CityLayers.COUNT:
+			params.append(CityLayers.PARAMS[i])
+			var t: Color = CityLayers.TINT[i]
+			tints.append(Vector4(t.srgb_to_linear().r, t.srgb_to_linear().g, t.srgb_to_linear().b, 1.0))
+		else:
+			params.append(Vector4.ZERO)
+			tints.append(Vector4.ONE)
+	_uber.set_shader_parameter("params", params)
+	_uber.set_shader_parameter("tint", tints)
+	return _uber

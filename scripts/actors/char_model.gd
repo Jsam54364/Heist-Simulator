@@ -70,6 +70,12 @@ static func build(owner: Node3D, role: String, color: Color, leg: Color, skin: C
 	if role == "cop":
 		parts.append([Vector3(0.12, 0.12, 0.02), Vector3(0.14, 1.32, 0.17), Color("ffd54a")])
 	var body := merged(parts)
+	# far LOD: the same body with both arms merged in at rest -> 1 draw call instead of 3
+	var far_parts := parts.duplicate()
+	for side in [1.0, -1.0]:
+		far_parts.append([Vector3(0.15, 0.62, 0.15), Vector3(side * 0.36, 1.46 - 0.3, 0), color, "outfit"])
+		far_parts.append([Vector3(0.12, 0.12, 0.12), Vector3(side * 0.36, 1.46 - 0.66, 0), skin])
+	var body_far := merged(far_parts)
 	var bm := MeshInstance3D.new()
 	bm.mesh = body.mesh
 	bm.material_override = mat
@@ -104,13 +110,16 @@ static func build(owner: Node3D, role: String, color: Color, leg: Color, skin: C
 	gun.position = Vector3(0, -0.62, 0.12)
 	gun.visible = false
 	arms[1].add_child(gun)
-	return {"inner": inner, "body": bm, "ranges": body.ranges, "arm_l": arms[0], "arm_r": arms[1], "arm_meshes": arm_meshes, "gun": gun, "mask": mask}
+	return {"inner": inner, "body": bm, "ranges": body.ranges, "body_far": body_far.mesh, "ranges_far": body_far.ranges, "arm_l": arms[0], "arm_r": arms[1], "arm_meshes": arm_meshes, "gun": gun, "mask": mask}
 
 ## Recolour the outfit vertices (used when the player changes clothes)
 static func recolor(mi: MeshInstance3D, ranges: Dictionary, color: Color) -> void:
+	mi.mesh = recolor_mesh(mi.mesh, ranges, color)
+
+static func recolor_mesh(mesh: Mesh, ranges: Dictionary, color: Color) -> Mesh:
 	if not ranges.has("outfit"):
-		return
-	var arr := mi.mesh.surface_get_arrays(0)
+		return mesh
+	var arr := mesh.surface_get_arrays(0)
 	var cols: PackedColorArray = arr[Mesh.ARRAY_COLOR]
 	for rg in ranges.outfit:
 		for i in range(rg[0], rg[0] + rg[1]):
@@ -118,4 +127,4 @@ static func recolor(mi: MeshInstance3D, ranges: Dictionary, color: Color) -> voi
 	arr[Mesh.ARRAY_COLOR] = cols
 	var m := ArrayMesh.new()
 	m.add_surface_from_arrays(Mesh.PRIMITIVE_TRIANGLES, arr)
-	mi.mesh = m
+	return m

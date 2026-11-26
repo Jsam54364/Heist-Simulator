@@ -54,7 +54,8 @@ var damp_c := 0.0
 
 var body_node: Node3D
 var paint_mat: StandardMaterial3D
-var tail_mat: StandardMaterial3D
+var body_mi: MeshInstance3D
+var _brake_lit := -1
 var bar_red: MeshInstance3D
 var bar_blue: MeshInstance3D
 var skid_last := [null, null]
@@ -140,9 +141,41 @@ func place(pos: Vector3, p_yaw: float) -> void:
 	angular_velocity = Vector3.ZERO
 	reset_physics_interpolation()
 
-func _physics_process(dt: float) -> void:
-	if removed:
+## LOD: far traffic rides its lane kinematically ("rail"), sleeping/parked cars skip
+## the suspension script entirely, far cars drop wheel animation and shadows.
+var rail := false
+var lod_far := false
+var _shadow_on := true
+
+func set_rail(on: bool, speed := 0.0) -> void:
+	if on == rail:
 		return
+	rail = on
+	freeze_mode = RigidBody3D.FREEZE_MODE_KINEMATIC
+	freeze = on
+	if not on:
+		linear_velocity = fwd_dir() * speed
+		angular_velocity = Vector3.ZERO
+
+func set_lod(far: bool, shadow: bool) -> void:
+	if far != lod_far:
+		lod_far = far
+		for w in wheels:
+			w.pivot.visible = not far
+	if shadow != _shadow_on:
+		_shadow_on = shadow
+		var mode := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for m in find_children("*", "MeshInstance3D", true, false):
+			m.cast_shadow = mode
+
+func _physics_process(dt: float) -> void:
+	if removed or freeze:
+		return
+	if sleeping:
+		if absf(throttle) > 0.01 or absf(steer_in) > 0.01:
+			sleeping = false
+		else:
+			return
 	var b := global_basis
 	var up := b.y
 	var fwd := b.z
@@ -261,6 +294,8 @@ func _physics_process(dt: float) -> void:
 
 func _process(dt: float) -> void:
 	# wheels follow suspension, spin, steer; body roll/pitch is real physics
+	if lod_far or not visible or (sleeping and not siren):
+		return
 	var v_body := linear_velocity.dot(global_basis.z)
 	for w in wheels:
 		var wy: float = MOUNT_Y - (w.get("len", REST))
@@ -268,9 +303,11 @@ func _process(dt: float) -> void:
 		w.spin.rotation.x += v_body * dt / WHEEL_R
 		if w.front:
 			w.pivot.rotation.y = -steer
-	if tail_mat:
-		var lit := braking or (throttle < -0.02 and v_body > 0.5)
-		tail_mat.emission_energy_multiplier = 4.0 if lit else 0.8
+	if body_mi:
+		var lit := 1 if (braking or (throttle < -0.02 and v_body > 0.5)) else 0
+		if lit != _brake_lit:
+			_brake_lit = lit
+			body_mi.set_instance_shader_parameter("brake", 4.0 if lit else 0.8)
 	if bar_red:
 		var on := siren and int(Game.t * 6.0) % 2 == 0
 		(bar_red.material_override as StandardMaterial3D).emission_energy_multiplier = (5.0 if on else 0.3) if siren else 0.2

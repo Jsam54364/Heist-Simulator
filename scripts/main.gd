@@ -13,6 +13,7 @@ const PED_COLORS := [Color("b0b8c0"), Color("9db4c8"), Color("c8b49d"), Color("a
 var world: Node3D
 var builder: MeshBuilder
 var nav: NavGrid
+var streamer: WorldStreamer
 var site_builder: SiteBuilder
 var npc_ai: Node
 var traffic: Node
@@ -52,7 +53,10 @@ func _ready() -> void:
 	city.build(KEEP)
 	site_builder = SiteBuilder.new(builder)
 	site_builder.build()
-	builder.finalize(world)
+	streamer = WorldStreamer.new()
+	streamer.name = "Streamer"
+	world.add_child(streamer)
+	streamer.setup(builder)
 	_add_ocean()
 	nav = NavGrid.new(builder.cols)
 	Roads.build()
@@ -86,6 +90,7 @@ func _ready() -> void:
 	hud = Hud.new()
 	add_child(hud)
 	Settings.apply()
+	streamer.prime(SPAWN)
 	Game.paused = true
 
 func _add_ocean() -> void:
@@ -287,6 +292,7 @@ func respawn() -> void:
 	P.crumbs.clear()
 	camera.yaw = -PI / 2
 	camera.snap()
+	streamer.prime(SPAWN)
 	var car: Vehicle = Game.player_car
 	if is_instance_valid(car) and U.d2(car.global_position, SPAWN) > 30.0 and car.trunk.is_empty():
 		car.place(Vector3(69, 0, -4.95), -PI / 2)
@@ -300,10 +306,15 @@ func _physics_process(dt: float) -> void:
 		Sfx.set_loop("screech", 0.0)
 		return
 	Game.t += dt
+	nav.budget = 3
+	var t0 := Time.get_ticks_usec()
 	player_ctl.update_player(dt)
 	Game.partner.mask_mesh.visible = player_ctl.masked
+	t0 = _prof("player", t0)
 	traffic.update(dt)
+	t0 = _prof("traffic", t0)
 	traffic.contacts()
+	t0 = _prof("contacts", t0)
 	var pp: Vector3 = player_ctl.in_car.global_position if player_ctl.in_car else player_ctl.global_position
 	var b = null
 	for bd in Game.buildings:
@@ -312,20 +323,53 @@ func _physics_process(dt: float) -> void:
 	Game.cur_building = b
 	Game.in_garage = b != null and b.garage
 	player_ctl.compute_aim()
+	t0 = _prof("aim", t0)
 	npc_ai.update(dt)
+	t0 = _prof("npc_ai", t0)
 	Game.police.update(dt)
+	t0 = _prof("police", t0)
 	Game.robbery.update(dt)
+	t0 = _prof("robbery", t0)
+
+## Optional per-system timing (enabled by the profiling scene).
+var prof := {}
+var profiling := false
+func _prof(key: String, t0: int) -> int:
+	var t1 := Time.get_ticks_usec()
+	if profiling:
+		prof[key] = prof.get(key, 0) + (t1 - t0)
+	return t1
 
 func _process(dt: float) -> void:
+	var t0 := Time.get_ticks_usec()
 	camera.update_cam(dt)
+	t0 = _prof("camera", t0)
 	if Game.running:
 		hud.update_state(dt)
+	t0 = _prof("hud_state", t0)
 	cull_t -= dt
 	if cull_t <= 0.0:
 		cull_t = 0.25
-		var cp := camera.global_position
-		for c in Game.chars:
-			if not c.hidden:
-				c.visible = absf(c.global_position.x - cp.x) + absf(c.global_position.z - cp.z) < 130.0
-		for s in Game.sites:
-			s.group.visible = absf(s.door.x - cp.x) + absf(s.door.z - cp.z) < 110.0
+		_update_actor_lod()
+	t0 = _prof("lod", t0)
+
+## Actor LOD, every 0.25 s: hide far people, drop their shadows / animation rate, and
+## give far cars no wheels / shadows. Distances scale with the graphics preset.
+var actor_lod := {"char_shadow": 25.0, "char_hide": 130.0, "car_shadow": 45.0, "car_detail": 110.0}
+func _update_actor_lod() -> void:
+	var cp := camera.global_position
+	var sc: float = streamer.lod_scale
+	for c in Game.chars:
+		if c.hidden:
+			continue
+		var d: float = Vector2(c.global_position.x - cp.x, c.global_position.z - cp.z).length()
+		c.visible = d < actor_lod.char_hide * sc
+		var lvl := 0 if d < 30.0 * sc else (1 if d < 70.0 * sc else 2)
+		if c == player_ctl or c == Game.partner:
+			lvl = 0
+		c.set_lod(lvl, d < actor_lod.char_shadow)
+	for car in Game.cars:
+		var d: float = Vector2(car.global_position.x - cp.x, car.global_position.z - cp.z).length()
+		car.set_lod(d > actor_lod.car_detail * sc, d < actor_lod.car_shadow)
+	for s in Game.sites:
+		s.group.visible = absf(s.door.x - cp.x) + absf(s.door.z - cp.z) < 70.0 * sc

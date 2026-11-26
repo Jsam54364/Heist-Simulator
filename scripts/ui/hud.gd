@@ -21,6 +21,8 @@ var death_title: Label
 var death_body: Label
 var start_btn: Button
 var quality_btn: Button
+var fps_btn: Button
+var autores_btn: Button
 var fps_label: Label
 const MAP_PX := 2.0
 const MX0 := -150.0
@@ -46,9 +48,15 @@ func _ready() -> void:
 	canvas.pause_pressed.connect(func(): open_screen("pause"))
 	canvas.map_pressed.connect(func(): open_screen("map"))
 	fps_label = Label.new()
-	fps_label.position = Vector2(8, 700)
-	fps_label.add_theme_font_size_override("font_size", 12)
-	fps_label.visible = false
+	fps_label.anchor_top = 1.0
+	fps_label.anchor_bottom = 1.0
+	fps_label.offset_left = 8
+	fps_label.offset_top = -22
+	fps_label.offset_bottom = -4
+	fps_label.add_theme_font_size_override("font_size", 13)
+	fps_label.add_theme_constant_override("outline_size", 4)
+	fps_label.add_theme_color_override("font_outline_color", Color.BLACK)
+	fps_label.visible = Settings.show_fps
 	add_child(fps_label)
 	_build_screens()
 	pois = [
@@ -154,7 +162,10 @@ func update_state(dt: float) -> void:
 	var P = Game.player
 	actions = P.current_actions() if not P.dead else null
 	_update_minimap()
-	fps_label.text = "%d fps" % Engine.get_frames_per_second()
+	if fps_label.visible:
+		var st: Dictionary = Game.main.streamer.stats
+		fps_label.text = "%d fps  |  3D %d%%  |  chunks %d near, %d far, %d loading" % [Engine.get_frames_per_second(),
+			roundi(get_viewport().scaling_3d_scale * 100.0), st.loaded, st.far, st.queued]
 	var t = P.aim_target
 	if t != null and P.weapon:
 		var s := Player.role_name(t).capitalize()
@@ -341,7 +352,18 @@ func _build_screens() -> void:
 		Settings.cycle_quality()
 		_refresh_settings())
 	v.add_child(quality_btn)
-	v.add_child(_button("Show FPS", func(): fps_label.visible = not fps_label.visible))
+	fps_btn = _button("Frame rate: ", func():
+		Settings.cycle_fps()
+		_refresh_settings())
+	v.add_child(fps_btn)
+	autores_btn = _button("Auto resolution: ", func():
+		Settings.toggle_auto_res()
+		_refresh_settings())
+	v.add_child(autores_btn)
+	v.add_child(_button("Show FPS", func():
+		Settings.show_fps = not Settings.show_fps
+		Settings.save()
+		fps_label.visible = Settings.show_fps))
 	v.add_child(_button("How to play", func():
 		start_btn.text = "RESUME"
 		open_screen("start")))
@@ -390,6 +412,8 @@ func _build_screens() -> void:
 
 func _refresh_settings() -> void:
 	quality_btn.text = "Graphics: " + Settings.quality.capitalize()
+	fps_btn.text = "Frame rate: %d fps%s" % [Settings.fps_cap, " (battery saver)" if Settings.fps_cap == 30 else ""]
+	autores_btn.text = "Auto resolution: " + ("On" if Settings.auto_res else "Off")
 
 func _start_game() -> void:
 	screens.start.visible = false

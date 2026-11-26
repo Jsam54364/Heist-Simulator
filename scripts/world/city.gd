@@ -145,6 +145,7 @@ func building(x1: float, x2: float, z1: float, z2: float, o: Dictionary) -> floa
 	B.box(cx, low_top - 0.15, cz, w + 0.6, 0.5, d + 0.6, paint, {"color": trim, "collide": false})
 	B.box(cx, low_top, cz, w, 0.12, d, Mats.m("roof_gravel"), nc)
 	B.add_col(Vector3(x1, 0, z1), Vector3(x2, low_top + 1, z2))
+	B.building_volume(Vector3(x1, 0, z1), Vector3(x2, low_top, z2), Mats.far_cell(mat), color, GF)
 	var top := low_top
 	if setback:
 		var iw := w - 6
@@ -159,6 +160,7 @@ func building(x1: float, x2: float, z1: float, z2: float, o: Dictionary) -> floa
 		B.box(cx, top - 0.15, cz, iw + 0.6, 0.5, id + 0.6, paint, {"color": trim, "collide": false})
 		B.box(cx, top, cz, iw, 0.12, id, Mats.m("roof_gravel"), nc)
 		B.add_col(Vector3(cx - iw / 2, low_top, cz - id / 2), Vector3(cx + iw / 2, top + 1, cz + id / 2))
+		B.building_volume(Vector3(cx - iw / 2, low_top, cz - id / 2), Vector3(cx + iw / 2, top, cz + id / 2), Mats.far_cell(mat), color)
 		rooftop(cx, cz, iw, id, top)
 		rooftop(cx, cz, w, d, low_top)
 	else:
@@ -411,7 +413,17 @@ func street_props() -> void:
 						else: trash_bin(x, pz)
 				x += 12.5
 				k += 1
-	var zebra := Mats.m("crosswalk")
+	# zebra crossings as real stripes in the merged city material (no transparent
+	# overlay quads = no extra draw calls / overdraw)
+	var stripe := Mats.m("line_white")
+	var zc := {"collide": false, "shadow": false, "color": Color(0.96, 0.96, 0.94)}
+	var zebra := func(cx: float, y: float, cz: float, along_x: bool):
+		for k in 8:
+			var o := -6.0 + 0.375 + 0.375 + k * 1.5
+			if along_x:
+				B.box(cx + o, y, cz, 0.75, 0.02, 2.8, stripe, zc)
+			else:
+				B.box(cx, y, cz + o, 2.8, 0.02, 0.75, stripe, zc)
 	for rx in Game.ROAD_X:
 		for rz in Game.ROAD_Z:
 			var tee: bool = rx == 150.0
@@ -419,9 +431,9 @@ func street_props() -> void:
 				if tee and dd[0] == 1:
 					continue
 				if dd[1] != 0:
-					B.box(rx, 0.03, rz + dd[1] * 7.6, 12, 0.02, 3, zebra, {"collide": false, "shadow": false, "tile": Vector2(12, 3)})
+					zebra.call(rx, 0.03, rz + dd[1] * 7.6, true)
 				else:
-					B.box(rx + dd[0] * 7.6, 0.05, rz, 12, 0.02, 3, zebra, {"collide": false, "shadow": false, "tile": Vector2(12, 3), "basis": Basis(Vector3.UP, PI / 2)})
+					zebra.call(rx + dd[0] * 7.6, 0.05, rz, false)
 			if not near_keep(rx + 7.4, rz + 7.4, 4):
 				traffic_light(rx + 7.4, rz + 7.4, -1, 0)
 			if not tee and not near_keep(rx - 7.4, rz - 7.4, 4):

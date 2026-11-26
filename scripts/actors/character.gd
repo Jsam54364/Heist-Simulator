@@ -74,6 +74,36 @@ func setup(p_role: String, pos: Vector3, opts := {}) -> Character:
 	armed = role in ["cop", "guard", "truckguard", "partner", "player"]
 	return self
 
+## LOD (set by main every 0.25 s from camera distance): 0 near, 1 mid (animate every
+## 2nd frame, move without collision), 2 far (animate every 4th frame, small parts hidden).
+var lod := 0
+var far_move := false
+var body_near: Mesh
+var body_far: Mesh
+var ranges_far: Dictionary
+var meshes: Array = []
+var _shadow_on := true
+var _anim_acc := 0.0
+var _anim_n := 0
+var ai_acc := 0.0
+var ai_n := 0
+
+func set_lod(level: int, shadow: bool) -> void:
+	if level != lod:
+		var was := lod
+		lod = level
+		far_move = level >= 1 and role != "player"
+		if (was == 0) != (level == 0):
+			# beyond ~30 m: arms are baked into the body mesh (1 draw call per person)
+			body_mesh.mesh = body_near if level == 0 else body_far
+			for am in arm_meshes:
+				am.visible = level == 0
+	if shadow != _shadow_on:
+		_shadow_on = shadow
+		var mode := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+		for m in meshes:
+			m.cast_shadow = mode
+
 func _ready() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	collision_layer = Game.L_CHAR
@@ -93,6 +123,9 @@ func _ready() -> void:
 	inner = m.inner
 	body_mesh = m.body
 	ranges = m.ranges
+	body_near = body_mesh.mesh
+	body_far = m.body_far
+	ranges_far = m.ranges_far
 	arm_l = m.arm_l
 	arm_r = m.arm_r
 	arm_meshes = m.arm_meshes
@@ -100,9 +133,14 @@ func _ready() -> void:
 	mask_mesh = m.mask
 	rotation.y = yaw
 	walk_phase = randf() * 6.0
+	for mi in inner.find_children("*", "MeshInstance3D", true, false):
+		mi.layers = 1 | 4   # world + "characters" render layer (room lights reach people)
+		meshes.append(mi)
 
 func set_outfit_color(c: Color) -> void:
-	CharModel.recolor(body_mesh, ranges, c)
+	body_near = CharModel.recolor_mesh(body_near, ranges, c)
+	body_far = CharModel.recolor_mesh(body_far, ranges_far, c)
+	body_mesh.mesh = body_far if lod >= 1 else body_near
 	for am in arm_meshes:
 		CharModel.recolor(am, am.get_meta("ranges"), c)
 
@@ -127,7 +165,7 @@ func step_toward(target: Vector3, speed: float, dt: float, face := true) -> floa
 		velocity = Vector3.ZERO
 		return d
 	var s := minf(speed, d / dt)
-	if noclip:
+	if noclip or far_move:
 		global_position += Vector3(dx / d, 0, dz / d) * s * dt
 	else:
 		velocity = Vector3(dx / d * s, 0, dz / d * s)
@@ -147,11 +185,16 @@ func move_dir(dir: Vector3, speed: float, dt: float) -> void:
 func nav_move(target: Vector3, speed: float, dt: float, replan := 1.2) -> float:
 	path_t -= dt
 	if path.is_empty() or path_t <= 0.0 or U.d2(path_target, target) > 2.5:
-		path = Game.main.nav.find_path(global_position, target)
-		if path.is_empty():
-			path = [Vector3(target.x, 0, target.z)]
-		path_t = replan + randf() * 0.4
-		path_target = target
+		if Game.main.nav.take_budget():
+			path = Game.main.nav.find_path(global_position, target)
+			if path.is_empty():
+				path = [Vector3(target.x, 0, target.z)]
+			path_t = replan + randf() * 0.4
+			path_target = target
+		else:
+			if path.is_empty():
+				path = [Vector3(target.x, 0, target.z)]
+			path_t = 0.05
 	while path.size() > 1 and U.d2(path[0], global_position) < 0.45:
 		path.pop_front()
 	var before := global_position
@@ -196,8 +239,16 @@ func knock_out() -> void:
 
 # ---------- animation ----------
 func _process(dt: float) -> void:
-	if hidden:
+	if hidden or not visible:
 		return
+	if lod > 0:
+		_anim_acc += dt
+		_anim_n += 1
+		if _anim_n < (2 if lod == 1 else 4):
+			return
+		dt = _anim_acc
+		_anim_acc = 0.0
+		_anim_n = 0
 	rotation.y = yaw
 	var target_y := Game.ground_y(global_position.x, global_position.z)
 	var al := 0.0
