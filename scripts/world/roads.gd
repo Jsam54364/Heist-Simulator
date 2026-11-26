@@ -1,93 +1,96 @@
 class_name Roads
 extends RefCounted
-## Road graph for police/AI route planning plus the traffic loops.
+## Road graph for police/AI route planning: Route 1 down the length of Key Lento (a node
+## every ~40 m), the town street grid and the side streets into the neighbourhoods and
+## marinas. Planned with Godot's native AStar3D. Also lane helpers + town traffic loops.
 
-const END := 146.0
+static var gen: KeysGen
 static var nodes: Array = []   # Vector2(x, z)
-static var adj: Array = []
+static var astar := AStar3D.new()
+static var segs: Array = []    # [Vector2 a, Vector2 b] for closest_road_point
+const R1_END := 1262.0
 
-static func _idx(x: float, z: float) -> int:
+static func _add(p: Vector2) -> int:
 	for i in nodes.size():
-		if nodes[i].x == x and nodes[i].y == z:
+		if nodes[i].distance_squared_to(p) < 1.0:
 			return i
-	nodes.append(Vector2(x, z))
-	adj.append([])
+	nodes.append(p)
+	astar.add_point(nodes.size() - 1, Vector3(p.x, 0, p.y))
 	return nodes.size() - 1
 
 static func _link(a: int, b: int) -> void:
-	if not adj[a].has(b):
-		adj[a].append(b)
-		adj[b].append(a)
+	if a != b and not astar.are_points_connected(a, b):
+		astar.connect_points(a, b)
+		segs.append([nodes[a], nodes[b]])
 
-static func build() -> void:
+static func build(p_gen: KeysGen) -> void:
+	gen = p_gen
 	nodes.clear()
-	adj.clear()
-	var zs := [-END] + Game.ROAD_Z + [END]
-	for x in Game.ROAD_X:
+	segs.clear()
+	astar.clear()
+	# junction x positions along Route 1
+	var xs := {}
+	var x := -R1_END
+	while x <= R1_END:
+		xs[snappedf(x, 1.0)] = true
+		x += 40.0
+	for tx in KeysGen.TOWN_X:
+		xs[tx] = true
+	var side := []   # [x on route, Vector2 far end]
+	for s in gen.streets:
+		var r: Rect2 = s.rect
+		if s.axis != "z" or absf(r.get_center().x) < KeysGen.TOWN:
+			continue
+		var sx := r.get_center().x
+		xs[snappedf(sx, 1.0)] = true
+		var c := gen.rc(sx)
+		var far_z := r.position.y if absf(r.position.y - c) > absf(r.end.y - c) else r.end.y
+		side.append([snappedf(sx, 1.0), Vector2(sx, far_z - signf(far_z - c) * 3.0)])
+	var keys := xs.keys()
+	keys.sort()
+	var prev := -1
+	for kx in keys:
+		var i := _add(Vector2(kx, gen.rc(kx)))
+		if prev >= 0:
+			_link(prev, i)
+		prev = i
+	for sd in side:
+		_link(_add(Vector2(sd[0], gen.rc(sd[0]))), _add(sd[1]))
+	# town grid: cross streets from z -110 to 116, back streets at TOWN_N / TOWN_S
+	var zs := [-108.0, KeysGen.TOWN_N, 0.0, KeysGen.TOWN_S, 114.0]
+	for tx in KeysGen.TOWN_X:
 		for k in zs.size() - 1:
-			_link(_idx(x, zs[k]), _idx(x, zs[k + 1]))
-	var xs := [-END] + Game.ROAD_X
-	for z in Game.ROAD_Z:
-		for k in xs.size() - 1:
-			_link(_idx(xs[k], z), _idx(xs[k + 1], z))
+			_link(_add(Vector2(tx, zs[k])), _add(Vector2(tx, zs[k + 1])))
+	for z in [KeysGen.TOWN_N, KeysGen.TOWN_S]:
+		for k in KeysGen.TOWN_X.size() - 1:
+			_link(_add(Vector2(KeysGen.TOWN_X[k], z)), _add(Vector2(KeysGen.TOWN_X[k + 1], z)))
 
 static func nearest_node(p: Vector3) -> int:
-	var best := 0
-	var bd := 1e9
-	for i in nodes.size():
-		var d: float = Vector2(nodes[i].x - p.x, nodes[i].y - p.z).length()
-		if d < bd:
-			bd = d
-			best = i
-	return best
+	return astar.get_closest_point(Vector3(p.x, 0, p.z))
 
 static func closest_road_point(p: Vector3) -> Vector3:
-	var best := Vector3.ZERO
-	var bd := 1e9
-	for x in Game.ROAD_X:
-		var q := Vector3(x, 0, clampf(p.z, -END, END))
-		var d := Vector2(q.x - p.x, q.z - p.z).length()
+	var q := Vector2(p.x, p.z)
+	var best := Vector2.ZERO
+	var bd := INF
+	for sg in segs:
+		var a: Vector2 = sg[0]
+		var b: Vector2 = sg[1]
+		if absf(a.x - q.x) > 80.0 and absf(b.x - q.x) > 80.0 and signf(a.x - q.x) == signf(b.x - q.x):
+			continue
+		var c := Geometry2D.get_closest_point_to_segment(q, a, b)
+		var d := c.distance_squared_to(q)
 		if d < bd:
 			bd = d
-			best = q
-	for z in Game.ROAD_Z:
-		var q := Vector3(clampf(p.x, -END, Game.ROAD_SPAN_X[1]), 0, z)
-		var d := Vector2(q.x - p.x, q.z - p.z).length()
-		if d < bd:
-			bd = d
-			best = q
-	return best
+			best = c
+	return Vector3(best.x, 0, best.y)
 
 static func plan(from: Vector3, to: Vector3) -> Array:
 	var s := nearest_node(from)
 	var e := nearest_node(to)
-	var n := nodes.size()
-	var dist := []
-	var prev := []
-	var done := []
-	dist.resize(n); prev.resize(n); done.resize(n)
-	dist.fill(1e9); prev.fill(-1); done.fill(false)
-	dist[s] = 0.0
-	while true:
-		var u := -1
-		for i in n:
-			if not done[i] and (u < 0 or dist[i] < dist[u]):
-				u = i
-		if u < 0 or dist[u] >= 1e9:
-			break
-		done[u] = true
-		if u == e:
-			break
-		for v in adj[u]:
-			var d: float = dist[u] + (nodes[u] - nodes[v]).length()
-			if d < dist[v]:
-				dist[v] = d
-				prev[v] = u
+	var ids := astar.get_id_path(s, e)
 	var out := []
-	var k := e
-	while k != -1:
-		out.push_front(Vector3(nodes[k].x, 0, nodes[k].y))
-		k = prev[k]
+	for id in ids:
+		out.append(Vector3(nodes[id].x, 0, nodes[id].y))
 	if out.size() > 1:
 		var a: Vector3 = out[0]
 		var b: Vector3 = out[1]
@@ -105,16 +108,18 @@ static func far_node(from: Vector3, min_d: float, max_d: float) -> Vector3:
 	var pick: Vector2 = c[randi() % c.size()] if not c.is_empty() else nodes[randi() % nodes.size()]
 	return Vector3(pick.x, 0, pick.y)
 
+## Route 1 node ahead of p in the given travel direction (+1 east, -1 west), for
+## dispatching units that come up the highway towards you.
+static func route_point(x: float, lane := 0.0) -> Vector3:
+	return Vector3(x, 0, gen.rc(x) + lane)
+
+## Town traffic loops (clockwise around blocks, driven in the right-hand lane).
 const LOOPS := [
-	[[-50, -50], [50, -50], [50, 0], [-50, 0]],
-	[[0, 0], [0, 50], [50, 50], [50, 0]],
-	[[-100, -100], [100, -100], [100, 100], [-100, 100]],
-	[[100, -100], [150, -100], [150, 100], [100, 100]],
-	[[-100, 50], [-50, 50], [-50, 100], [-100, 100]],
-	[[0, -100], [0, -50], [-100, -50], [-100, -100]],
-	[[100, 100], [100, -100], [-100, -100], [-100, 100]],
-	[[50, 50], [100, 50], [100, 0], [50, 0]],
-	[[150, -50], [150, 50], [100, 50], [100, -50]],
+	[[-50, -60], [50, -60], [50, 0], [-50, 0]],
+	[[0, 0], [0, 65], [100, 65], [100, 0]],
+	[[-150, -60], [-50, -60], [-50, 0], [-150, 0]],
+	[[100, -60], [200, -60], [200, 0], [100, 0]],
+	[[-200, 0], [-200, 65], [-100, 65], [-100, 0]],
 ]
 
 static func lane_loop(loop: Array) -> Array:

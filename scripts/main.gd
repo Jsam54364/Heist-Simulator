@@ -1,17 +1,23 @@
 extends Node3D
-## Game root: builds the city and robbery sites, spawns the cast, runs the fixed-rate
-## simulation (60 Hz physics ticks, interpolated rendering) and routes game events
-## (damage, run-overs, crashes, WASTED/BUSTED). Port of main.js.
+## Game root: lays out Key Lento and the robbery sites, spawns the cast, runs the
+## fixed-rate simulation (60 Hz physics ticks, interpolated rendering) and routes game
+## events (damage, run-overs, crashes, WASTED/BUSTED).
 
-const KEEP := [[20, -7.4], [-25, -7.4], [25, 7.4], [-72, -7.5], [74, -7.5], [-26, 9], [-11, 27.5], [70, 9.5], [34.5, -7.5],
-	[-61.5, -7.5], [17, 7.5], [69, -6.6], [30.1, -8], [39.1, 7.5], [-37.8, -8], [37.5, 22.3], [12.5, 27.75], [14.25, -22], [-31.25, -24]]
-const SPAWN := Vector3(74, 0, -7.6)
-const PED_COLORS := [Color("b0b8c0"), Color("9db4c8"), Color("c8b49d"), Color("a8c89d"), Color("c89dbb")]
+var SPAWN := Vector3.ZERO
+const PED_COLORS := [Color("b0b8c0"), Color("9db4c8"), Color("c8b49d"), Color("a8c89d"), Color("c89dbb"), Color("e8a0a0"),
+	Color("f2d28a"), Color("8fd1c6"), Color("ffffff"), Color("6e7f99")]
+## every material KeysGen uses: created up front on the main thread, because chunk
+## generation runs on worker threads and must only read the material cache
+const GEN_MATS := ["grass", "sand", "concrete", "wood_planks", "asphalt", "line_yellow", "line_white", "sidewalk", "paint",
+	"shopfront", "facade_stucco", "roof_gravel", "awning", "signs", "metal_brushed", "trunk", "leaf", "lamp_glow", "paint_gloss",
+	"light_panel"]
 
 @onready var camera: FollowCamera = $Camera
 @onready var sun: DirectionalLight3D = $Sun
 var world: Node3D
+var world_gen: KeysGen
 var builder: MeshBuilder
+var sea: MeshInstance3D
 var nav: NavGrid
 var streamer: WorldStreamer
 var site_builder: SiteBuilder
@@ -48,25 +54,33 @@ func _ready() -> void:
 	fx.name = "Fx"
 	add_child(fx)
 	# --- static world ---
+	world_gen = KeysGen.new()
+	world_gen.layout()
+	SPAWN = world_gen.spawn
+	for mn in GEN_MATS:
+		Mats.m(mn)
+	Mats.uber()
 	builder = MeshBuilder.new(world)
-	var city := CityGen.new(builder)
-	city.build(KEEP)
 	site_builder = SiteBuilder.new(builder)
 	site_builder.build()
+	world_gen.fill_far(builder)
 	streamer = WorldStreamer.new()
 	streamer.name = "Streamer"
 	world.add_child(streamer)
-	streamer.setup(builder)
+	streamer.setup(builder, world_gen)
+	nav = NavGrid.new(builder, world_gen)
+	streamer.chunk_ready.connect(nav.on_chunk)
+	streamer.prime(SPAWN)
+	nav.follow(SPAWN)
 	_add_ocean()
-	nav = NavGrid.new(builder.cols)
-	Roads.build()
+	Roads.build(world_gen)
 	# --- cast ---
-	player_ctl = Player.new().setup("player", SPAWN, {"hp": 100.0, "yaw": -PI / 2}) as Player
+	player_ctl = Player.new().setup("player", SPAWN, {"hp": 100.0, "yaw": PI}) as Player
 	player_ctl.name = "Player"
 	world.add_child(player_ctl)
 	Game.player = player_ctl
 	Game.chars.append(player_ctl)
-	var partner := spawn_char("partner", SPAWN + Vector3(-1.8, 0, 1.0), {"hp": 999.0, "yaw": -PI / 2})
+	var partner := spawn_char("partner", SPAWN + Vector3(-1.8, 0, 0.6), {"hp": 999.0, "yaw": PI})
 	var bag := MeshInstance3D.new()
 	var bm := BoxMesh.new()
 	bm.size = Vector3(0.5, 0.35, 0.3)
@@ -77,15 +91,17 @@ func _ready() -> void:
 	partner.inner.add_child(bag)
 	partner.bag_mesh = bag
 	Game.partner = partner
-	Game.player_car = spawn_car("coupe", Vector3(69, 0, -4.95), -PI / 2, {"color_idx": 3, "personal": true})
+	Game.player_car = spawn_car("pickup", world_gen.spawn_car, world_gen.spawn_car_yaw, {"color_idx": 3, "personal": true, "tracker": false})
 	traffic.spawn()
-	for i in 12:
-		var p: Vector3 = npc_ai.random_sidewalk()
-		var c := spawn_char("pedestrian", nav.free_point(p), {"color": PED_COLORS[i % 5]})
-		c.state = "walk"
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	for i in 10:
+		var p: Vector3 = world_gen.ped_spot(SPAWN, 12.0, 90.0, rng)
+		if p != Vector3.INF:
+			spawn_pedestrian(p)
 	site_builder.spawn_parked_cars()
 	site_builder.reset_all()
-	camera.yaw = -PI / 2
+	camera.yaw = PI
 	# --- UI + quality ---
 	hud = Hud.new()
 	add_child(hud)
@@ -93,41 +109,53 @@ func _ready() -> void:
 	streamer.prime(SPAWN)
 	Game.paused = true
 
+## The sea: one wave-animated plane that follows the camera (snapped to its quad size,
+## so the world-space waves never swim) plus a sea floor 3 m down for sunk cars.
+## The water shader reads a land mask so it knows where shallows, foam and calm are.
 func _add_ocean() -> void:
-	var sea := MeshInstance3D.new()
+	sea = MeshInstance3D.new()
 	var pm := PlaneMesh.new()
-	pm.size = Vector2(520, 900)
-	pm.subdivide_width = 96
-	pm.subdivide_depth = 160
+	pm.size = Vector2(1600, 1600)
+	pm.subdivide_width = 159
+	pm.subdivide_depth = 159
 	sea.mesh = pm
-	sea.material_override = Mats.m("water")
-	sea.position = Vector3(176 + 260, 0.0, 0)
+	var wm: ShaderMaterial = Mats.m("water")
+	var img := Image.create(world_gen.nx, world_gen.nz, false, Image.FORMAT_RGB8)
+	for j in world_gen.nz:
+		for i in world_gen.nx:
+			var land := world_gen.mask[j * world_gen.nx + i] != KeysGen.WATER
+			img.set_pixel(i, j, Color(1, 1, 1) if land else Color(0, 0, 0))
+	var soft := img.duplicate() as Image
+	soft.resize(world_gen.nx / 6, world_gen.nz / 6, Image.INTERPOLATE_BILINEAR)
+	soft.resize(world_gen.nx, world_gen.nz, Image.INTERPOLATE_BILINEAR)
+	for j in world_gen.nz:
+		for i in world_gen.nx:
+			img.set_pixel(i, j, Color(img.get_pixel(i, j).r, clampf(soft.get_pixel(i, j).r * 2.2, 0.0, 1.0), 0))
+	wm.set_shader_parameter("land_tex", ImageTexture.create_from_image(img))
+	wm.set_shader_parameter("land_origin", Vector2(KeysGen.X0, KeysGen.Z0))
+	wm.set_shader_parameter("land_size", Vector2(KeysGen.X1 - KeysGen.X0, KeysGen.Z1 - KeysGen.Z0))
+	sea.material_override = wm
+	sea.position = Vector3(world_gen.spawn.x, KeysGen.SEA_Y, world_gen.spawn.z)
 	sea.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
 	world.add_child(sea)
-	# far ground so the horizon never shows void past the boundary walls
-	var far := MeshInstance3D.new()
-	var fm := PlaneMesh.new()
-	fm.size = Vector2(1170, 1400)
-	far.mesh = fm
-	far.material_override = Mats.solid(Color("6d6a60"), 0.95)
-	far.position = Vector3(170 - 585, -0.06, 0)
-	far.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-	world.add_child(far)
-	# physical ground (road surface height); sidewalks/sand add their own slabs on top
 	var gb := StaticBody3D.new()
 	gb.name = "Ground"
 	gb.collision_layer = Game.L_GROUND
 	gb.collision_mask = 0
+	gb.add_child(world_gen.ground_shape())
 	var gs := CollisionShape3D.new()
 	var box := BoxShape3D.new()
-	box.size = Vector3(900, 1, 900)
+	box.size = Vector3(KeysGen.X1 - KeysGen.X0 + 400.0, 1, KeysGen.Z1 - KeysGen.Z0 + 400.0)
 	gs.shape = box
-	gs.position = Vector3(25, -0.48, 0)
+	gs.position = Vector3(0, -3.5, 0)
 	gb.add_child(gs)
-	var pmat := PhysicsMaterial.new()
-	pmat.friction = 0.9
-	gb.physics_material_override = pmat
 	world.add_child(gb)
+
+func spawn_pedestrian(p: Vector3) -> Character:
+	var c := spawn_char("pedestrian", p, {"color": PED_COLORS[randi() % PED_COLORS.size()], "yaw": randf() * TAU})
+	c.state = "walk"
+	npc_ai.give_traits(c)
+	return c
 
 # ---------- spawning ----------
 func spawn_char(role: String, pos: Vector3, opts := {}) -> Character:
@@ -164,6 +192,10 @@ func remove_car(car) -> void:
 func builder_cols_add(minv: Vector3, maxv: Vector3, tag := "") -> Dictionary:
 	var c := {"min": minv, "max": maxv, "glass": false, "solid": true, "tag": tag, "ground": false}
 	builder.cols.append(c)
+	var ck := MeshBuilder.chunk_of((minv + maxv) * 0.5)
+	if not builder.cols_by_chunk.has(ck):
+		builder.cols_by_chunk[ck] = []
+	builder.cols_by_chunk[ck].append(c)
 	return c
 
 # ---------- queries ----------
@@ -205,14 +237,19 @@ func on_char_down(c, src) -> void:
 	if src == player_ctl:
 		var pp := player_ctl.global_position
 		if c.role == "cop":
-			Game.police.raise_stars(clampi(Game.wanted.stars + 1, 3, 5), pp, "Officer down")
+			Game.record.cop_kills += 1
+			Game.police.raise_stars(clampi(Game.wanted.stars + 1, 3, Game.MAX_STARS), pp, "Officer down")
 		elif c.role != "guard" and c.role != "truckguard":
+			Game.record.civ_kills += 1
 			if c.site != null:
 				Game.robbery.crime(c.site, "murder")
+			npc_ai.crime_event(c.global_position, "Murder", 3, 30.0)
 			for k in Game.chars:
 				if k.role == "cop" and not k.dead and U.d2(k.in_car.global_position if k.in_car else k.global_position, pp) < 40.0:
 					Game.police.raise_stars(3, pp, "Murder witnessed by police")
 					break
+	if c.mem.get("call_t", 0.0) > 0.0:
+		c.mem.call_t = 0.0
 
 func on_run_over(c, car, sp: float) -> void:
 	if c == player_ctl:
@@ -285,17 +322,18 @@ func respawn() -> void:
 	var pt = Game.partner
 	pt.in_car = null
 	pt.set_hidden(false)
-	pt.teleport(SPAWN + Vector3(-1.8, 0, 1.0))
+	pt.teleport(SPAWN + Vector3(-1.8, 0, 0.6))
 	for s in Game.sites:
 		s.player_inside = false
 		s.left_reported = true
 	P.crumbs.clear()
-	camera.yaw = -PI / 2
+	camera.yaw = PI
 	camera.snap()
 	streamer.prime(SPAWN)
+	nav.follow(SPAWN)
 	var car: Vehicle = Game.player_car
 	if is_instance_valid(car) and U.d2(car.global_position, SPAWN) > 30.0 and car.trunk.is_empty():
-		car.place(Vector3(69, 0, -4.95), -PI / 2)
+		car.place(world_gen.spawn_car, world_gen.spawn_car_yaw)
 
 # ---------- loop ----------
 func _physics_process(dt: float) -> void:
@@ -307,6 +345,10 @@ func _physics_process(dt: float) -> void:
 		return
 	Game.t += dt
 	nav.budget = 3
+	if player_ctl.in_car:
+		nav.follow(player_ctl.in_car.global_position, player_ctl.in_car.linear_velocity)
+	else:
+		nav.follow(player_ctl.global_position)
 	var t0 := Time.get_ticks_usec()
 	player_ctl.update_player(dt)
 	Game.partner.mask_mesh.visible = player_ctl.masked
@@ -352,6 +394,9 @@ func _process(dt: float) -> void:
 		cull_t = 0.25
 		_update_actor_lod()
 	t0 = _prof("lod", t0)
+	if sea:
+		var cp := camera.global_position
+		sea.global_position = Vector3(snappedf(cp.x, 20.0), KeysGen.SEA_Y, snappedf(cp.z, 20.0))
 
 ## Actor LOD, every 0.25 s: hide far people, drop their shadows / animation rate, and
 ## give far cars no wheels / shadows. Distances scale with the graphics preset.

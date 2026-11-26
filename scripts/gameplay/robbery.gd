@@ -44,7 +44,7 @@ func trigger_alarm(site: Dictionary, why: String) -> void:
 	Game.notify("ALARM - %s. Police dispatched." % why, "bad")
 	Sfx.play("bad")
 	transmit(site)
-	Game.police.raise_stars(4 if site.vault_hit else site.alarm_stars, site.door, "Alarm at " + site.name)
+	Game.police.report(4 if site.vault_hit else site.alarm_stars, site.door, "Silent alarm at " + site.name)
 
 ## Police receive footage + statements (alarm, or when you leave the building)
 func transmit(site: Dictionary) -> void:
@@ -447,7 +447,7 @@ func _update_sites(_dt: float) -> void:
 		if s.player_inside and not inside and s.robbery_active and not s.left_reported:
 			s.left_reported = true
 			transmit(s)
-			Game.police.raise_stars(4 if s.vault_hit else s.leave_stars, s.door, "Police responding to " + s.name)
+			Game.police.report(4 if s.vault_hit else s.leave_stars, s.door, "Robbery reported at " + s.name)
 			if s.take > 0.0:
 				Game.stats.robberies += 1
 				Game.stats.best = maxf(Game.stats.best, s.take)

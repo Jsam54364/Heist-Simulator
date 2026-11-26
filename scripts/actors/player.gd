@@ -12,6 +12,7 @@ var crumbs: Array = []
 var aim_target = null
 var aim_point := Vector3.ZERO
 var bust_t := 0.0
+var surrendering := false
 var armor := 0.0
 var inp := {"jx": 0.0, "jy": 0.0, "sprint": false, "gas": false, "brake": false, "handbrake": false, "fire": false}
 
@@ -55,6 +56,31 @@ func toggle_mask() -> void:
 	masked = not masked
 	mask_mesh.visible = masked
 	Sfx.play("click")
+
+## Give yourself up: holster, hands up, let the cops come to you.
+func give_up() -> void:
+	if surrendering:
+		surrendering = false
+		return
+	if not Game.police.can_surrender():
+		Game.notify("Nobody to surrender to" if Game.profile() != "PSYCHO" else "Psycho profile - the police won't take your surrender", "bad")
+		return
+	surrendering = true
+	weapon = false
+	show_gun = false
+	action = null
+	Game.notify("You put your hands up. Stay still...", "warn")
+
+## Duck down in a stopped car to hide from the police.
+func toggle_hide() -> void:
+	if in_car == null:
+		return
+	if in_car.crouched:
+		in_car.crouched = false
+	elif absf(in_car.speed()) < 1.5:
+		in_car.crouched = true
+		in_car.throttle = 0.0
+		Game.notify("Hiding in the car - stay still", "good")
 
 func toggle_weapon() -> void:
 	if in_car:
@@ -149,6 +175,10 @@ func fire() -> void:
 	Sfx.play("shot_suppressed" if Game.tools.suppressor else "shot")
 	if not Game.tools.suppressor:
 		Game.add_noise(global_position, 30.0)
+		Game.main.npc_ai.crime_event(global_position, "Shots fired", 2, 45.0, true)
+	else:
+		Game.main.npc_ai.crime_event(global_position, "Shooting", 2, 10.0)
+	Game.police.shot_ray(start, dir, t_hit)
 	var site = null
 	for s in Game.sites:
 		if U.in_bounds(global_position, s.bounds, 1.0):
@@ -166,7 +196,8 @@ func fire() -> void:
 		Sfx.play("hit")
 		hit_char.damage(34.0, self)
 		if hit_char.role == "cop":
-			Game.police.raise_stars(clampi(Game.wanted.stars + (1 if hit_char.dead else 0), 3, 5), global_position, "Shots fired at police")
+			Game.record.shots_at_cops += 1
+			Game.police.raise_stars(clampi(Game.wanted.stars + (1 if hit_char.dead else 0), 3, Game.MAX_STARS), global_position, "Shots fired at police")
 		if hit_char.site != null:
 			Game.robbery.crime(hit_char.site, "shoot")
 	if not Game.tools.suppressor and Game.wanted.stars == 0:
@@ -222,7 +253,7 @@ func dynamic_candidates() -> Array:
 		if c == self or c.hidden or c.role == "partner" or c.role == "fence":
 			continue
 		var d := U.d2(c.global_position, pp)
-		if d > 1.8:
+		if d > (2.6 if c.role in ["pedestrian", "driver"] else 1.8):
 			continue
 		if (c.ko or c.dead) and (c.has_code or c.has_key) and not c.searched and c.site != null:
 			out.append({"pos": c.global_position, "d": d - 0.2, "actions": [act("Search body", 1.4, func(): search_body(c))]})
@@ -232,11 +263,22 @@ func dynamic_candidates() -> Array:
 		var facing := cos(U.ang_diff(c.yaw, U.ang_to(c.global_position, pp)))
 		var helpless: bool = c.pose in ["cower", "kneel", "handsup", "work"] or c.state == "surrendered"
 		var unaware: bool = facing < 0.2 or not c.armed
-		if helpless or unaware or c.role in ["civilian", "pedestrian"]:
+		var npc_ai = Game.main.npc_ai
+		var people: bool = c.role in ["civilian", "pedestrian", "driver", "staff", "teller", "clerk"]
+		if helpless or unaware or people:
 			var nm := role_name(c)
-			var a := [act("Take down " + nm, 0.5, func(): takedown(c), {"crime": true})]
+			var a := []
+			if helpless and people and not c.mem.get("tied", false):
+				var n: int = Game.tools.get("zipties", 0)
+				a.append(act("Zip-tie %s (%d left)" % [nm, n], 1.2, func(): npc_ai.zip_tie(c), {"crime": true, "disabled": n <= 0}))
+			if helpless and c.role in ["civilian", "pedestrian", "driver"] and not c.mem.get("robbed", false):
+				a.append(act("Take their wallet", 1.0, func(): npc_ai.rob_wallet(c), {"crime": true}))
+			a.append(act("Take down " + nm, 0.5, func(): takedown(c), {"crime": true}))
 			if c.state == "surrendered" and (c.has_code or c.has_key) and not c.searched:
 				a.append(act("Search " + nm, 1.4, func(): search_body(c), {"crime": true}))
+			if not helpless and not weapon and c.role in ["pedestrian", "driver"] and c.state in ["walk", "idle", "confront"]:
+				a.push_front(act("Antagonize", 0.0, func(): npc_ai.antagonize(c)))
+				a.push_front(act("Greet", 0.0, func(): npc_ai.greet(c)))
 			out.append({"pos": c.global_position, "d": d + 0.3, "actions": a})
 	var pt = Game.partner
 	if pt and not pt.hidden and U.d2(pt.global_position, pp) < 2.6:
@@ -278,6 +320,7 @@ func takedown(c) -> void:
 		Game.police.raise_stars(maxi(3, Game.wanted.stars), global_position, "Assaulted an officer")
 	else:
 		Game.notify(role_name(c).capitalize() + " knocked out")
+		Game.main.npc_ai.crime_event(c.global_position, "Assault", 1, 14.0)
 
 func search_body(c) -> void:
 	c.searched = true
@@ -298,12 +341,11 @@ func enter_car(car) -> void:
 		d.in_car = null
 		d.set_hidden(false)
 		d.role = "driver"
-		d.state = "flee"
-		d.mem.flee_t = 8.0
 		d.teleport(car.global_position - U.right(car.yaw()) * 1.8)
-		d.mem.witness = true
-		d.mem.witness_pos = car.global_position
-		d.mem.call_t = 0.0
+		Game.main.npc_ai.give_traits(d)
+		Game.main.npc_ai.crime_event(car.global_position, "Carjacking", 1, 18.0)
+		d.state = "flee"
+		d.mem.erase("dest")
 		car.npc_driver = null
 		car.ai = {}
 		Game.notify("Carjacked! The driver will call the cops.", "warn")
@@ -422,6 +464,12 @@ func update_player(dt: float) -> void:
 		car.throttle = thr
 		car.steer_in = st
 		car.handbrake = inp.handbrake or key(KEY_SPACE)
+		if car.crouched:
+			if absf(thr) > 0.1 or absf(st) > 0.3:
+				car.crouched = false
+			else:
+				car.throttle = 0.0
+				car.handbrake = true
 		global_position = Vector3(car.global_position.x, 0, car.global_position.z)
 		var sp := car.linear_velocity.length()
 		Sfx.set_loop("engine", 0.5 + absf(thr) * 0.35, 0.7 + car.rpm * 0.9 + car.gear * 0.04)
@@ -433,6 +481,17 @@ func update_player(dt: float) -> void:
 	Sfx.set_loop("screech", 0.0)
 	var cam = Game.main.camera
 	var mag := minf(1.0, Vector2(jx, jy).length())
+	if surrendering:
+		if mag > 0.5 or weapon or Game.wanted.stars == 0:
+			surrendering = false
+			if Game.wanted.stars > 0:
+				Game.notify("You broke your surrender!", "bad")
+		else:
+			move_dir(Vector3.ZERO, 0.0, dt)
+			pose = "handsup"
+			show_gun = false
+			speed_now = 0.0
+			return
 	var mv := U.fwd(cam.yaw) * jy + U.right(cam.yaw) * jx
 	var moving := mag > 0.15
 	var spd := 0.0

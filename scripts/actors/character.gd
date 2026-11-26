@@ -107,7 +107,7 @@ func set_lod(level: int, shadow: bool) -> void:
 func _ready() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
 	collision_layer = Game.L_CHAR
-	collision_mask = Game.L_WORLD | Game.L_GLASS | Game.L_VEHICLE
+	collision_mask = Game.L_WORLD | Game.L_GLASS | Game.L_VEHICLE | Game.L_SHORE
 	var cs := CollisionShape3D.new()
 	var cap := CapsuleShape3D.new()
 	cap.radius = 0.32
@@ -148,7 +148,7 @@ func set_hidden(h: bool) -> void:
 	hidden = h
 	visible = not h
 	collision_layer = 0 if h else Game.L_CHAR
-	collision_mask = 0 if h else (Game.L_WORLD | Game.L_GLASS | Game.L_VEHICLE)
+	collision_mask = 0 if h else (Game.L_WORLD | Game.L_GLASS | Game.L_VEHICLE | Game.L_SHORE)
 
 func teleport(p: Vector3) -> void:
 	global_position = Vector3(p.x, 0, p.z)
@@ -263,6 +263,12 @@ func _process(dt: float) -> void:
 	match p:
 		"handsup":
 			al = PI; ar = PI
+		"phone":
+			ar = -2.5; al = -0.35
+		"film":
+			al = -1.45; ar = -1.45
+		"wave":
+			ar = PI * 0.85 + sin(Game.t * 12.0) * 0.35
 		"cower":
 			al = PI * 0.85; ar = PI * 0.85; y = -0.45
 		"kneel":

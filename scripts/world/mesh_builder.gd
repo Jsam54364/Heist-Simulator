@@ -18,14 +18,16 @@ const LAYERS := ["main", "interior", "mid", "detail"]
 const MID_MATS := ["leaf", "trunk", "lamp_glow"]
 
 var chunks := {}               # Vector2i -> {"parts": {key: part}, "verts": int}
-var cols: Array = []           # {min, max, glass, solid, tag, ground}
+var cols: Array = []           # every collider record (kept for site/global colliders)
+var cols_by_chunk := {}        # Vector2i -> [collider records] (navigation rasterises these)
+var bodies := {}               # Vector2i -> {"world": StaticBody3D, "glass": .., "ground": .., "shore": ..}
+var parent_node: Node3D        # null = detached builder used on a worker thread
+var pending_cols: Array = []   # detached mode: collider specs to create on the main thread
+var force_chunk = null         # Vector2i: put everything into this chunk (lot-anchored generation)
 var far_boxes: Array = []      # {min: Vector3, max: Vector3, cell: int, color: Color, ground_floor: float}
 var far_ground: Array = []     # {rect: Rect2, y: float, color: Color}
 var occluders: Array = []      # {min: Vector3, max: Vector3}
 var interior_rects: Array = [] # Rect2 (xz) of enterable rooms, ground floor only
-var world_body: StaticBody3D
-var glass_body: StaticBody3D
-var ground_body: StaticBody3D
 
 const FACES := [
 	# normal, right (u+), up (v-)
@@ -37,18 +39,25 @@ const FACES := [
 	[Vector3(0, 0, -1), Vector3(-1, 0, 0), Vector3(0, 1, 0)],
 ]
 
-func _init(parent: Node3D) -> void:
-	world_body = _body(parent, "WorldStatic", Game.L_WORLD)
-	glass_body = _body(parent, "GlassStatic", Game.L_GLASS)
-	ground_body = _body(parent, "GroundStatic", Game.L_GROUND)
+func _init(parent: Node3D = null) -> void:
+	parent_node = parent
 
-func _body(parent: Node3D, n: String, layer: int) -> StaticBody3D:
-	var b := StaticBody3D.new()
-	b.name = n
-	b.collision_layer = layer
-	b.collision_mask = 0
-	parent.add_child(b)
-	return b
+const BODY_LAYERS := {"world": 1, "glass": 2, "ground": 16, "shore": 32}
+
+## One StaticBody3D per chunk and collision layer, so a chunk's colliders can be added
+## and freed as a unit (one big body with thousands of shapes would rebuild constantly).
+func _chunk_body(ck: Vector2i, layer: String) -> StaticBody3D:
+	if not bodies.has(ck):
+		bodies[ck] = {}
+	var bd: Dictionary = bodies[ck]
+	if not bd.has(layer):
+		var b := StaticBody3D.new()
+		b.name = "Col_%s_%d_%d" % [layer, ck.x, ck.y]
+		b.collision_layer = BODY_LAYERS[layer]
+		b.collision_mask = 0
+		parent_node.add_child(b)
+		bd[layer] = b
+	return bd[layer]
 
 static func chunk_of(p: Vector3) -> Vector2i:
 	return Vector2i(int(floor(p.x / CHUNK)), int(floor(p.z / CHUNK)))
@@ -61,7 +70,7 @@ static func chunk_rect(ck: Vector2i) -> Rect2:
 var cur_uber := -1.0
 
 func _part(mat: Material, shadow: bool, layer: String, at: Vector3) -> Dictionary:
-	var ck := chunk_of(at)
+	var ck: Vector2i = force_chunk if force_chunk != null else chunk_of(at)
 	if not chunks.has(ck):
 		chunks[ck] = {"parts": {}, "verts": 0}
 	var parts: Dictionary = chunks[ck].parts
@@ -279,21 +288,65 @@ func cylinder(cx: float, y: float, cz: float, r: float, h: float, mat: Material,
 
 func add_col(minv: Vector3, maxv: Vector3, opts := {}) -> Dictionary:
 	var layer: String = opts.get("layer", "world")
-	var colinfo := {"min": minv, "max": maxv, "glass": layer == "glass", "solid": opts.get("solid", true), "tag": opts.get("tag", ""), "ground": layer == "ground"}
-	cols.append(colinfo)
+	var colinfo := {"min": minv, "max": maxv, "glass": layer == "glass", "solid": opts.get("solid", true), "tag": opts.get("tag", ""),
+		"ground": layer == "ground", "shore": layer == "shore"}
+	if parent_node == null:
+		pending_cols.append({"min": minv, "max": maxv, "opts": opts})
+		return colinfo
+	var ck: Vector2i = force_chunk if force_chunk != null else chunk_of((minv + maxv) * 0.5)
+	if force_chunk == null:
+		cols.append(colinfo)   # hand-built (site) colliders; generated ones live per chunk only
+	if not cols_by_chunk.has(ck):
+		cols_by_chunk[ck] = []
+	cols_by_chunk[ck].append(colinfo)
 	var cs := CollisionShape3D.new()
 	var bs := BoxShape3D.new()
 	bs.size = (maxv - minv).max(Vector3(0.02, 0.02, 0.02))
 	cs.shape = bs
 	cs.position = (minv + maxv) * 0.5
-	var body := world_body
-	if layer == "glass":
-		body = glass_body
-	elif layer == "ground":
-		body = ground_body
-	body.add_child(cs)
+	_chunk_body(ck, layer).add_child(cs)
 	colinfo["shape"] = cs
+	colinfo["chunk"] = ck
 	return colinfo
+
+## Bring a worker-thread builder's chunk into this (main) builder: geometry is appended to
+## the chunk's parts, collider specs become real shapes.
+func merge_chunk(src: MeshBuilder, ck: Vector2i) -> void:
+	if src.chunks.has(ck):
+		if not chunks.has(ck):
+			chunks[ck] = {"parts": {}, "verts": 0}
+		var dst: Dictionary = chunks[ck].parts
+		for key in src.chunks[ck].parts:
+			var p: Dictionary = src.chunks[ck].parts[key]
+			if not dst.has(key):
+				dst[key] = p
+				continue
+			var d: Dictionary = dst[key]
+			var base: int = d.v.size()
+			var idx: PackedInt32Array = p.i
+			for k in idx.size():
+				idx[k] += base
+			d.v.append_array(p.v)
+			d.n.append_array(p.n)
+			d.t.append_array(p.t)
+			d.uv.append_array(p.uv)
+			d.uv2.append_array(p.uv2)
+			d.c.append_array(p.c)
+			d.i.append_array(idx)
+	var keep = force_chunk
+	force_chunk = ck
+	for pc in src.pending_cols:
+		add_col(pc.min, pc.max, pc.opts)
+	force_chunk = keep
+
+## Free a generated chunk's geometry data and colliders (it can be regenerated later).
+func unload_chunk(ck: Vector2i) -> void:
+	chunks.erase(ck)
+	if bodies.has(ck):
+		for l in bodies[ck]:
+			bodies[ck][l].queue_free()
+		bodies.erase(ck)
+	cols_by_chunk.erase(ck)
 
 ## Far-LOD + occluder record for a building volume (called by the city/site generators).
 ## cell: index into far_atlas.png (0 stucco, 1 brick, 2 office, 3 glass, 4 shopfront, 5 roof)

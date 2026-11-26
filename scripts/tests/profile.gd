@@ -50,9 +50,12 @@ func _run() -> void:
 	for c in main.builder.cols:
 		shapes += 1
 	print("BUILD %.0f ms  nodes=%d mesh_instances=%d colliders=%d chars=%d cars=%d" % [t_build / 1000.0, nodes, meshes, shapes, Game.chars.size(), Game.cars.size()])
-	var spots := [["spawn", Vector3(74, 0, -7.6), -PI / 2], ["downtown", Vector3(0, 0, -7.5), PI * 0.25], ["bank", Vector3(25, 0, 12.5), 0.0], ["avenue", Vector3(-50, 0, 40), PI]]
+	var gen: KeysGen = main.world_gen
+	var spots := [["spawn", gen.spawn, PI], ["downtown", Vector3(0, 0, -7.5), PI * 0.25], ["bank", Vector3(25, 0, 12.5), 0.0],
+		["route1", Vector3(-600, 0, gen.rc(-600) + 9.0), PI / 2], ["canals", Vector3(-800, 0, gen.rc(-800) - 30.0), PI]]
 	for s in spots:
 		P.teleport(s[1])
+		main.streamer.prime(s[1])
 		main.camera.yaw = s[2]
 		main.camera.pitch = 0.18
 		main.camera.snap()
@@ -97,22 +100,56 @@ func _run() -> void:
 	var t_phys := 0.0
 	var t_proc := 0.0
 	var worst := 0.0
+	var gen_us := 0
 	var start := Time.get_ticks_usec()
 	for i in 1200:
 		P.inp.jy = 1.0 if (i / 200) % 2 == 0 else 0.0
 		P.inp.jx = 0.3 if i % 300 < 150 else -0.3
 		await get_tree().physics_frame
 		ticks += 1
+		if i == 600:
+			print("   monitors: process=%s physics=%s nav=%s fps=%s" % [Performance.get_monitor(Performance.TIME_PROCESS), Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS), Performance.get_monitor(Performance.TIME_NAVIGATION_PROCESS), Performance.get_monitor(Performance.TIME_FPS)])
 		var pf := Performance.get_monitor(Performance.TIME_PHYSICS_PROCESS) * 1000.0
 		var pr := Performance.get_monitor(Performance.TIME_PROCESS) * 1000.0
+		gen_us += main.streamer.stats.gen_us
 		t_phys += pf
 		t_proc += pr
 		worst = maxf(worst, pf)
 	var wall := (Time.get_ticks_usec() - start) / 1000.0
 	print("CPU over %d ticks: wall %.1f ms/tick, physics %.2f ms avg (worst %.1f), process %.2f ms avg" % [ticks, wall / ticks, t_phys / ticks, worst, t_proc / ticks])
+	print("   streamer gen step %.3f ms/frame" % (gen_us / 1000.0 / ticks))
 	var keys: Array = main.prof.keys()
 	keys.sort_custom(func(a, b): return main.prof[a] > main.prof[b])
 	for k in keys:
 		print("   %-10s %6.3f ms/tick" % [k, main.prof[k] / 1000.0 / ticks])
 	print("   nav paths: ", Game.get_meta("nav_calls", 0))
+	# CPU while driving fast down Route 1: chunks generate on worker threads ahead of you
+	var car: Vehicle = Game.player_car
+	car.place(Vector3(-1100, 0, gen.rc(-1100) + 3.0), PI / 2)
+	P.inp.jx = 0.0
+	P.inp.jy = 0.0
+	P.teleport(car.global_position)
+	main.streamer.prime(car.global_position)
+	P.enter_car(car)
+	P.inp.gas = true
+	var g0: int = main.streamer.gen_stats.generated
+	var worst_frame := 0.0
+	var sum_frame := 0.0
+	var n := 0
+	var last := Time.get_ticks_usec()
+	for i in 1500:
+		var cp := car.global_position
+		var la := Vector3(cp.x + 20.0, 0, gen.rc(cp.x + 20.0) + 3.0)
+		P.inp.jx = -clampf(U.ang_diff(car.yaw(), U.ang_to(cp, la)) * 2.4, -1.0, 1.0)
+		await get_tree().process_frame
+		var now := Time.get_ticks_usec()
+		var ft := (now - last) / 1000.0
+		last = now
+		if i > 5:
+			worst_frame = maxf(worst_frame, ft)
+			sum_frame += ft
+			n += 1
+	print("   nav window raster %.1f ms" % main.nav.last_raster_ms)
+	print("DRIVE %.0f m in %d frames: avg frame %.2f ms, worst %.1f ms, chunks generated %d, freed %d, loaded layers %d" % [car.global_position.x + 1100.0, n,
+		sum_frame / n, worst_frame, main.streamer.gen_stats.generated - g0, main.streamer.gen_stats.freed, main.streamer.stats.loaded])
 	get_tree().quit()

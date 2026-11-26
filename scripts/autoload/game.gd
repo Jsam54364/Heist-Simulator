@@ -26,6 +26,8 @@ const L_GLASS := 2
 const L_VEHICLE := 4
 const L_CHAR := 8
 const L_GROUND := 16
+const L_SHORE := 32          # seawalls: only people collide with them (cars can drive into the sea)
+const MAX_STARS := 6
 
 var t := 0.0
 var running := false
@@ -38,8 +40,22 @@ var bag_cap := 24.0
 var tools := {"snap": false, "c4": 0, "jammer": false, "suppressor": false, "armor": false}
 var known_codes := {}
 var keys := {}
-var wanted := {"stars": 0, "last": Vector3.ZERO, "seen_ago": 99.0, "clear": 0.0, "searching": false, "search_pt": Vector3.ZERO, "search_pick": 0.0, "suspicion": 0.0, "spawn_t": 0.0, "patrol_t": 8.0}
-var heat := {"face": 0.0, "outfit": -1, "outfit_t": 0.0, "car_id": -1, "car_color": -1, "car_t": 0.0}
+## Wanted state machine (GTA 6 style):
+##   none      -> no police interest
+##   response  -> a report came in (911 call, alarm, tracker); units drive to the report
+##                location. Suspect unknown: hollow stars.
+##   pursuit   -> police have eyes on you: solid stars, they know where you are
+##   lost      -> visual lost a moment ago: flashing stars, units close in on the last spot
+##   search    -> red search area around the last known position; stay out of sight or
+##                leave it and the stars drain. Escape and the area becomes a hot zone.
+var wanted := {"stars": 0, "state": "none", "last": Vector3.ZERO, "seen_ago": 99.0, "clear": 0.0, "searching": false,
+	"search_pt": Vector3.ZERO, "search_pick": 0.0, "search_r": 0.0, "suspicion": 0.0, "spawn_t": 0.0, "patrol_t": 8.0,
+	"report_t": 0.0, "eta": -1.0, "reason": "", "hidden": false}
+var heat := {"face": 0.0, "outfit": -1, "outfit_t": 0.0, "car_id": -1, "car_color": -1, "car_t": 0.0, "weapon": 0.0, "partner": 0.0, "cctv": 0}
+## criminal profile: how the police judge you (decides how fast they open fire and whether
+## surrendering is still an option)
+var record := {"cop_kills": 0, "civ_kills": 0, "shots_at_cops": 0, "escapes": 0, "busts": 0}
+var hot_zones: Array = []     # {pos: Vector3, r: float, t: float} areas police watch after an escape
 var focus := false
 var outfit := 0
 var spare_outfit := 1
@@ -72,22 +88,27 @@ func add_noise(pos: Vector3, r: float) -> void:
 	noise.append({"pos": pos, "r": r, "t": t})
 
 func ground_y(x: float, z: float) -> float:
-	## Height of the walkable surface (sidewalk slabs are 0.15 m, roads ~0.03 m).
-	if x > 156.0:
-		return 0.04 if x > 174.0 else 0.12
-	for r in ROAD_X:
-		if absf(x - r) < 6.0:
-			return 0.02
-	if x < ROAD_SPAN_X[1] + 6.0:
-		for r in ROAD_Z:
-			if absf(z - r) < 6.0:
-				return 0.045
-	return 0.15
+	## Height of the walkable surface (town blocks are 0.15 m slabs, roads ~0.02 m, docks 0.25 m).
+	if main != null and main.world_gen != null:
+		return main.world_gen.surface_y(x, z)
+	return 0.0
+
+func profile() -> String:
+	if record.cop_kills >= 3:
+		return "PSYCHO"
+	if record.cop_kills >= 1 or record.civ_kills >= 3:
+		return "VIOLENT"
+	if record.civ_kills >= 1 or record.shots_at_cops >= 1:
+		return "HARDENED"
+	return "PROFESSIONAL"
 
 func reset_state() -> void:
 	money = {"bank": 0.0, "cash": 250.0}
 	bag.clear()
 	partner_bag.clear()
-	tools = {"snap": false, "c4": 0, "jammer": false, "suppressor": false, "armor": false}
+	tools = {"snap": false, "c4": 0, "jammer": false, "suppressor": false, "armor": false, "zipties": 4}
 	known_codes.clear()
 	keys.clear()
+	tools["zipties"] = 4
+	record = {"cop_kills": 0, "civ_kills": 0, "shots_at_cops": 0, "escapes": 0, "busts": 0}
+	hot_zones.clear()

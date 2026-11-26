@@ -13,6 +13,12 @@ extends Node3D
 ##
 ## Radii scale with the graphics preset (Settings -> lod_scale). Buildings also become
 ## occluders, so blocks hidden behind other blocks aren't drawn at all.
+##
+## The island is too big to build up front, so chunk *content* is generated lazily too:
+## when a chunk comes within GEN_R, KeysGen builds its geometry + colliders on a
+## WorkerThreadPool thread (no frame hitch); the main thread only merges the result and
+## creates the collision shapes. Chunks far behind you (> FREE_R) drop their generated
+## data again. Chunks holding hand-built robbery sites are pinned.
 ## Pattern: chunked visibility-range HLOD as recommended in Godot's "Visibility ranges
 ## (HLOD)" and "Occlusion culling" docs, streamed with a per-frame time budget.
 
@@ -27,22 +33,40 @@ var far_mat: ShaderMaterial
 var lod_scale := 1.0
 var budget_usec := 2500         # time allowed per frame for building chunk meshes
 var eval_t := 0.0
-var stats := {"loaded": 0, "far": 0, "queued": 0, "built_ms": 0.0}
+var stats := {"loaded": 0, "far": 0, "queued": 0, "built_ms": 0.0, "gen_us": 0}
 var occluder: OccluderInstance3D
+var gen: KeysGen
+const GEN_R := 230.0
+const FREE_R := 420.0
+const MAX_TASKS := 3
+var tasks := {}                 # ck -> task id
+var done_q: Array = []          # [ck, MeshBuilder, extra]
+var mutex := Mutex.new()
+var pinned := {}                # chunks with hand-built (site) geometry: never freed
+var labels := {}                # ck -> [Label3D]
+var gen_stats := {"generated": 0, "freed": 0, "gen_ms": 0.0}
+var scan_t := 0.0
+signal chunk_ready(ck: Vector2i)
 
-func setup(builder: MeshBuilder) -> void:
+func setup(builder: MeshBuilder, p_gen: KeysGen = null) -> void:
 	B = builder
+	gen = p_gen
+	for ck in B.chunks:
+		pinned[ck] = true
 	far_mat = ShaderMaterial.new()
 	far_mat.shader = load("res://assets/shaders/far_city.gdshader")
 	far_mat.set_shader_parameter("atlas", load("res://assets/textures/far_atlas.png"))
 	var keys := {}
 	for ck in B.chunks:
 		keys[ck] = true
+	if gen:
+		for ck in gen.chunk_keys():
+			keys[ck] = true
 	var far_by := _far_geometry()
 	for ck in far_by:
 		keys[ck] = true
 	for ck in keys:
-		var cell := {"rect": MeshBuilder.chunk_rect(ck), "far": null, "layers": {}}
+		var cell := {"rect": MeshBuilder.chunk_rect(ck), "far": null, "layers": {}, "gen": "none" if gen else "done"}
 		for l in MeshBuilder.LAYERS:
 			cell.layers[l] = {"nodes": [], "loaded": false, "queued": false, "empty": not _has_layer(ck, l)}
 		if far_by.has(ck):
@@ -68,6 +92,24 @@ func _has_layer(ck: Vector2i, layer: String) -> bool:
 ## Load everything around a point immediately (spawn / respawn / teleport) so the first
 ## frame has no pop-in.
 func prime(at: Vector3) -> void:
+	if gen:
+		# generate everything in range right now, spread over all worker threads
+		var want := []
+		for ck in cells:
+			if cells[ck].gen == "none" and _dist(at, cells[ck].rect) < GEN_R * 0.75:
+				want.append(ck)
+		var t0 := Time.get_ticks_usec()
+		var results := []
+		results.resize(want.size())
+		var gid := WorkerThreadPool.add_group_task(func(i: int):
+			var r := _gen_job(want[i])
+			mutex.lock()
+			results[i] = r
+			mutex.unlock(), want.size())
+		WorkerThreadPool.wait_for_group_task_completion(gid)
+		for i in want.size():
+			_merge(want[i], results[i][0], results[i][1])
+		gen_stats.gen_ms = (Time.get_ticks_usec() - t0) / 1000.0
 	_evaluate(at)
 	var t := Time.get_ticks_usec()
 	while not queue.is_empty():
@@ -79,11 +121,14 @@ func _process(dt: float) -> void:
 	var cam := get_viewport().get_camera_3d()
 	if cam == null:
 		return
+	var t0 := Time.get_ticks_usec()
+	if gen:
+		_gen_step(_focus(cam.global_position))
+	stats.gen_us = Time.get_ticks_usec() - t0
 	eval_t -= dt
 	if eval_t <= 0.0:
 		eval_t = 0.15
 		_evaluate(cam.global_position)
-	var t0 := Time.get_ticks_usec()
 	while not queue.is_empty() and Time.get_ticks_usec() - t0 < budget_usec:
 		var q: Array = queue.pop_front()
 		_load(q[0], q[1])
@@ -92,6 +137,117 @@ static func _dist(p: Vector3, r: Rect2) -> float:
 	var dx := maxf(maxf(r.position.x - p.x, 0.0), p.x - r.end.x)
 	var dz := maxf(maxf(r.position.y - p.z, 0.0), p.z - r.end.y)
 	return sqrt(dx * dx + dz * dz)
+
+## Where content must exist: the player (or their car), not just the camera.
+func _focus(cam: Vector3) -> Vector3:
+	var P = Game.player
+	if P != null and is_instance_valid(P):
+		return P.in_car.global_position if P.in_car else P.global_position
+	return cam
+
+# ---------- lazy generation ----------
+func _gen_job(ck: Vector2i) -> Array:
+	var b := MeshBuilder.new()
+	var extra := gen.build_chunk(b, ck)
+	return [b, extra]
+
+func _gen_task(ck: Vector2i) -> void:
+	var r := _gen_job(ck)
+	mutex.lock()
+	done_q.append([ck, r[0], r[1]])
+	mutex.unlock()
+
+func _gen_step(at: Vector3) -> void:
+	# 1) merge finished chunks (main thread: colliders + labels), at most 2 per frame
+	var n := 0
+	while n < 2:
+		mutex.lock()
+		var item = done_q.pop_front() if not done_q.is_empty() else null
+		mutex.unlock()
+		if item == null:
+			break
+		var ck: Vector2i = item[0]
+		if tasks.has(ck):
+			WorkerThreadPool.wait_for_task_completion(tasks[ck])
+			tasks.erase(ck)
+		_merge(ck, item[1], item[2])
+		n += 1
+	scan_t -= get_process_delta_time()
+	if scan_t > 0.0:
+		return
+	scan_t = 0.1
+	# 2) start new jobs for the nearest missing chunks
+	if tasks.size() < MAX_TASKS:
+		var best := []
+		for ck in cells:
+			var c: Dictionary = cells[ck]
+			if c.gen != "none":
+				continue
+			var d := _dist(at, c.rect)
+			if d < GEN_R:
+				best.append([d, ck])
+		best.sort_custom(func(a, b): return a[0] < b[0])
+		for k in mini(best.size(), MAX_TASKS - tasks.size()):
+			var ck: Vector2i = best[k][1]
+			cells[ck].gen = "running"
+			tasks[ck] = WorkerThreadPool.add_task(_gen_task.bind(ck), false, "chunk")
+	# 3) free generated content far behind
+	for ck in cells:
+		var c: Dictionary = cells[ck]
+		if c.gen != "done" or pinned.has(ck):
+			continue
+		if _dist(at, c.rect) < FREE_R:
+			continue
+		var any := false
+		for l in MeshBuilder.LAYERS:
+			if c.layers[l].loaded:
+				any = true
+		if any:
+			continue
+		B.unload_chunk(ck)
+		for lb in labels.get(ck, []):
+			lb.queue_free()
+		labels.erase(ck)
+		for l in MeshBuilder.LAYERS:
+			c.layers[l].empty = true
+		c.gen = "none"
+		gen_stats.freed += 1
+
+func _merge(ck: Vector2i, src: MeshBuilder, extra: Dictionary) -> void:
+	B.merge_chunk(src, ck)
+	var cell: Dictionary = cells.get(ck, {})
+	if cell.is_empty():
+		return
+	cell.gen = "done"
+	gen_stats.generated += 1
+	for l in MeshBuilder.LAYERS:
+		var L: Dictionary = cell.layers[l]
+		L.empty = not _has_layer(ck, l)
+		if L.loaded:
+			# geometry changed under a loaded layer: rebuild it
+			_unload(L)
+	var made := []
+	for lb in extra.get("labels", []):
+		var l3 := Label3D.new()
+		l3.text = lb.text
+		l3.font_size = 64
+		l3.pixel_size = lb.size / 64.0
+		l3.outline_size = 10
+		l3.modulate = lb.color
+		l3.outline_modulate = Color(0, 0, 0, 0.75)
+		l3.position = lb.pos
+		l3.rotation.y = lb.yaw
+		l3.double_sided = false
+		l3.visibility_range_end = 140.0
+		l3.layers = 1
+		add_child(l3)
+		made.append(l3)
+	labels[ck] = made
+	chunk_ready.emit(ck)
+
+func generated(p: Vector3) -> bool:
+	var ck := MeshBuilder.chunk_of(p)
+	return not cells.has(ck) or cells[ck].gen == "done"
 
 func _evaluate(cam: Vector3) -> void:
 	queue.clear()

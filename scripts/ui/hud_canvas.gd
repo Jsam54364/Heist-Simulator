@@ -70,6 +70,8 @@ func layout() -> void:
 		btn("gas", Vector2(W - 118, H - 128), 64, "GAS", true, P.inp.gas, Color("7cf27c"))
 		btn("brake", Vector2(W - 268, H - 84), 52, "BRAKE", true, P.inp.brake, Color("ff6b6b"))
 		btn("handbrake", Vector2(W - 150, H - 286), 46, "DRIFT", true, P.inp.handbrake, Color("ffd23f"))
+		if absf(P.in_car.speed()) < 1.5 or P.in_car.crouched:
+			btn("hide", Vector2(W - 300, H - 236), 36, "HIDE", false, P.in_car.crouched, Color("7cf27c"))
 	else:
 		if P.weapon:
 			btn("fire", Vector2(W - 115, H - 200), 58, "FIRE", true, P.inp.fire, Color("ff5c5c"))
@@ -78,6 +80,10 @@ func layout() -> void:
 		btn("gun", Vector2(W - 232, H - 92), 42, "GUN", false, P.weapon, Color("ffcf5a"))
 		btn("mask", Vector2(W - 335, H - 62), 36, "MASK", false, P.masked, Color("b48cff"))
 		btn("focus", Vector2(W - 225, H - 226), 34, "FOCUS", false, Game.focus, Color("2de2e6"))
+		if _people_near(P):
+			btn("shout", Vector2(W - 330, H - 168), 36, "SHOUT", false, false, Color("ff9a3c"))
+		if Game.police.can_surrender() or P.surrendering:
+			btn("surrender", Vector2(W - 112, H - 330), 40, "GIVE UP", false, P.surrendering, Color("e6e6e6"))
 	# action pills
 	var acts = hud.actions
 	var x0 := W - 480.0
@@ -88,6 +94,14 @@ func layout() -> void:
 		var keys := ["E", "Q", "Z"]
 		for i in mini(3, acts.actions.size()):
 			pill("act%d" % i, Rect2(x0, y0 + i * 60, 340, 52), acts.actions[i], keys[i])
+
+func _people_near(P) -> bool:
+	for c in Game.chars:
+		if c.hidden or c.dead or c.ko or c.role not in ["pedestrian", "driver", "civilian", "staff", "teller", "clerk"]:
+			continue
+		if U.d2(c.global_position, P.global_position) < 14.0:
+			return true
+	return false
 
 func hit_button(p: Vector2):
 	for b in buttons:
@@ -179,6 +193,9 @@ func _press(id: String, down: bool) -> void:
 		"gun": P.toggle_weapon()
 		"mask": P.toggle_mask()
 		"focus": Game.focus = not Game.focus
+		"shout": Game.main.npc_ai.shout()
+		"surrender": P.give_up()
+		"hide": P.toggle_hide()
 		"pause": pause_pressed.emit()
 		"act0": hud.do_action(0)
 		"act1": hud.do_action(1)
@@ -202,6 +219,15 @@ func centered(s: String, c: Vector2, sz := 16, col := Color.WHITE, f: Font = nul
 		f = bold
 	var w := f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, sz).x
 	text(s, Vector2(c.x - w / 2, c.y + sz * 0.36), sz, col, HORIZONTAL_ALIGNMENT_LEFT, -1, f, outline)
+
+func star_outline(c: Vector2, r: float, col: Color) -> void:
+	var pts := PackedVector2Array()
+	for i in 11:
+		var a := -PI / 2 + i * PI / 5
+		var rr := r if i % 2 == 0 else r * 0.45
+		pts.append(c + Vector2(cos(a), sin(a)) * rr)
+	draw_polyline(pts, Color(0, 0, 0, 0.6), 4.0, true)
+	draw_polyline(pts, col, 2.0, true)
 
 func star(c: Vector2, r: float, col: Color) -> void:
 	var pts := PackedVector2Array()
@@ -270,15 +296,55 @@ func _draw() -> void:
 		var col: Color = {"bad": Color("ff6b6b"), "warn": Color("ffcf5a"), "good": Color("7cf27c")}.get(tm[1], Color.WHITE)
 		text(tm[0], Vector2(bx - 6, y + 16), 15, col, HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 4)
 		y += 24
-	# wanted stars + money (top right)
-	var flash: bool = Game.wanted.searching and int(Game.t * 3.0) % 2 == 1
-	for i in 5:
-		var on: bool = i < Game.wanted.stars
-		var c := Color(1, 1, 1, 0.95) if on else Color(1, 1, 1, 0.18)
-		if on and flash:
-			c = Color(1, 1, 1, 0.35)
-		star(Vector2(W - 34 - (4 - i) * 34, 36), 14, c)
-	var my := 76.0
+	# wanted stars (top right): hollow = response (suspect unknown), white = pursuit,
+	# flashing = visual lost, red = search area
+	var w := Game.wanted
+	var n_st: int = Game.MAX_STARS
+	for i in n_st:
+		var on: bool = i < w.stars
+		var cen := Vector2(W - 30 - (n_st - 1 - i) * 30, 36)
+		if not on:
+			star(cen, 12, Color(1, 1, 1, 0.14))
+			continue
+		match w.state:
+			"response":
+				star_outline(cen, 12, Color(1, 1, 1, 0.95))
+			"lost":
+				star(cen, 12, Color(1, 1, 1, 0.95 if int(Game.t * 4.0) % 2 == 0 else 0.3))
+			"search":
+				star(cen, 12, Color("ff4d5e") if int(Game.t * 2.0) % 2 == 0 else Color("ff8a95"))
+			_:
+				star(cen, 12, Color(1, 1, 1, 0.97))
+	# heat icons under the stars: what the police have on you
+	var icons := []
+	var HT := Game.heat
+	if HT.face > 0.0:
+		icons.append(["FACE", Color("ff6b6b")])
+	if HT.outfit >= 0 and HT.outfit == Game.outfit:
+		icons.append(["OUTFIT", Color("ffcf5a")])
+	if HT.car_id >= 0:
+		icons.append(["CAR", Color("ffcf5a") if not (P.in_car and P.in_car.car_id == HT.car_id) else Color("ff6b6b")])
+	if HT.weapon > 0.0:
+		icons.append(["GUN", Color("ffcf5a")])
+	if HT.partner > 0.0:
+		icons.append(["PARTNER", Color("b48cff")])
+	if HT.get("cctv", 0) > 0:
+		icons.append(["ONLINE" if HT.cctv == 2 else "CCTV", Color("2de2e6")])
+	var ix := W - 22.0
+	for ic in icons:
+		var tw := font.get_string_size(ic[0], HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x + 12
+		ix -= tw
+		sb_badge.bg_color = Color(0.05, 0.06, 0.08, 0.85)
+		draw_style_box(sb_badge, Rect2(ix, 54, tw, 18))
+		draw_rect(Rect2(ix, 54, 3, 18), ic[1])
+		text(ic[0], Vector2(ix + 7, 67), 11, ic[1], HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
+		ix -= 4
+	if w.stars > 0 or Game.profile() != "PROFESSIONAL":
+		var prof := Game.profile()
+		var ps := "PROFILE: " + prof
+		var pw := bold.get_string_size(ps, HORIZONTAL_ALIGNMENT_LEFT, -1, 11).x
+		text(ps, Vector2(W - 22 - pw, 88), 11, {"PROFESSIONAL": Color("9fe8b0"), "HARDENED": Color("ffcf5a"), "VIOLENT": Color("ff9a3c"), "PSYCHO": Color("ff4d5e")}[prof], HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 3)
+	var my := 104.0
 	for row in hud.money_rows:
 		var lw := 230.0
 		text(row[0], Vector2(W - 22 - lw, my), 13, Color(1, 1, 1, 0.7), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 3)
@@ -427,6 +493,19 @@ func _draw_labels() -> void:
 			continue
 		if c.ko and (c.has_code or c.has_key) and not c.searched and U.d2(c.global_position, pp) < 10.0:
 			items.append([c.global_position + Vector3(0, 0.7, 0), "SEARCH", Color("ffd54a")])
+			continue
+		if c.ko or U.d2(c.global_position, pp) > 45.0:
+			continue
+		# always-on warnings: people calling the cops, filming, sneaking out
+		var cp: float = Game.main.npc_ai.caller_progress(c)
+		if cp >= 0.0:
+			items.append([c.global_position + Vector3(0, 2.25, 0), "CALLING 911 %d%%" % roundi(cp * 100.0), Color("ff5c74")])
+		elif c.state == "film":
+			items.append([c.global_position + Vector3(0, 2.25, 0), "FILMING YOU", Color("2de2e6")])
+		elif c.state == "sneak":
+			items.append([c.global_position + Vector3(0, 2.25, 0), "SNEAKING OUT", Color("ff9a3c")])
+		elif c.mem.get("tied", false) and Game.focus:
+			items.append([c.global_position + Vector3(0, 1.6, 0), "TIED", Color("9fe8b0")])
 	for it in items:
 		var wp: Vector3 = it[0]
 		wp.y += Game.ground_y(wp.x, wp.z)

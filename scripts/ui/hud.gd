@@ -24,17 +24,18 @@ var quality_btn: Button
 var fps_btn: Button
 var autores_btn: Button
 var fps_label: Label
-const MAP_PX := 2.0
-const MX0 := -150.0
-const MZ0 := -150.0
-const MW := 350.0
-const MH := 300.0
+const MAP_PX := KeysGen.MAP_PX
+const MX0 := KeysGen.X0
+const MZ0 := KeysGen.Z0
+const MW := KeysGen.X1 - KeysGen.X0
+const MH := KeysGen.Z1 - KeysGen.Z0
 const TOOLS := [
 	{"id": "snap", "name": "Snap Gun", "price": 2500, "desc": "Silently breaks locks on back doors, staff doors and vault lockboxes."},
 	{"id": "suppressor", "name": "Suppressor", "price": 2000, "desc": "Shoot cameras without alerting the whole block."},
 	{"id": "c4", "name": "C4 charge", "price": 1500, "desc": "Blows reinforced doors. Always loud, always trips the alarm.", "stack": true},
 	{"id": "jammer", "name": "Dye-Pack Jammer", "price": 6000, "desc": "Stops dye packs in bank money from exploding when you leave."},
 	{"id": "armor", "name": "Body Armor", "price": 800, "desc": "Absorbs gunfire. Refills to full.", "stack": true},
+	{"id": "zipties", "name": "Zip-ties (x4)", "price": 120, "desc": "Restrain hostages so they can't run, call 911 or hit alarms.", "stack": true},
 ]
 
 func _ready() -> void:
@@ -59,29 +60,25 @@ func _ready() -> void:
 	fps_label.visible = Settings.show_fps
 	add_child(fps_label)
 	_build_screens()
+	var gen: KeysGen = Game.main.world_gen
+	var sh: Vector2 = gen.stilt_house.get_center()
 	pois = [
 		{"x": 20.0, "z": -15.0, "t": "$", "c": Color("7cf27c")}, {"x": -25.0, "z": -16.0, "t": "$$", "c": Color("7fe3ff")},
 		{"x": 25.0, "z": 20.0, "t": "$$$", "c": Color("ffd23f")}, {"x": -72.0, "z": -15.0, "t": "F", "c": Color("ff9ad5")},
-		{"x": 74.0, "z": -16.0, "t": "H", "c": Color.WHITE}, {"x": 70.0, "z": 18.0, "t": "S", "c": Color("ff6fb5")},
-		{"x": -27.0, "z": 25.0, "t": "P", "c": Color("7fb2ff")},
+		{"x": sh.x, "z": sh.y, "t": "H", "c": Color.WHITE}, {"x": 70.0, "z": 18.0, "t": "S", "c": Color("ff6fb5")},
+		{"x": -27.0, "z": 25.0, "t": "P", "c": Color("7fb2ff")}, {"x": Game.police.station.x, "z": Game.police.station.z + 18.0, "t": "*", "c": Color("6fa0ff")},
 	]
+	for l in gen.lots:
+		if l.get("brian", false):
+			pois.append({"x": l.rect.get_center().x, "z": l.rect.get_center().y, "t": "F", "c": Color("7fd4ff")})
 
 # ---------- map texture ----------
 func _build_map_texture() -> void:
-	var img := Image.create(int(MW * MAP_PX), int(MH * MAP_PX), false, Image.FORMAT_RGBA8)
-	img.fill(Color("2b3033"))
+	var img: Image = Game.main.world_gen.map_image.duplicate()
+	img.convert(Image.FORMAT_RGBA8)
 	var rect := func(x1: float, z1: float, w: float, d: float, c: Color):
 		var r := Rect2i(int((x1 - MX0) * MAP_PX), int((z1 - MZ0) * MAP_PX), maxi(1, int(w * MAP_PX)), maxi(1, int(d * MAP_PX)))
 		img.fill_rect(r.intersection(Rect2i(0, 0, img.get_width(), img.get_height())), c)
-	rect.call(Game.WORLD.shore - 12.0, MZ0, 12.0, MH, Color("c9b98f"))
-	rect.call(Game.WORLD.shore, MZ0, 40.0, MH, Color("1c4054"))
-	rect.call(-100.0 + 6.0, 50.0 + 6.0, 38.0, 38.0, Color("2f5a33"))
-	for x in Game.ROAD_X:
-		rect.call(x - 6.0, MZ0, 12.0, MH, Color("50565d"))
-	for z in Game.ROAD_Z:
-		rect.call(MX0, z - 6.0, Game.WORLD.shore - 12.0 - MX0, 12.0, Color("50565d"))
-	for r in Game.footprints:
-		rect.call(r.position.x, r.position.y, r.size.x, r.size.y, Color("454c55"))
 	var site_col := {"store": Color("2f8f5b"), "jewel": Color("5a4a9a"), "bank": Color("9a8a3a"), "fence": Color("8a3a6a"),
 		"safehouse": Color("3a8a7a"), "garage": Color("4a5a7a"), "spray": Color("9a4a7a")}
 	for b in Game.buildings:
@@ -97,6 +94,7 @@ func _build_minimap() -> void:
 	sm.shader = load("res://assets/shaders/minimap.gdshader")
 	sm.set_shader_parameter("map_tex", map_tex)
 	sm.set_shader_parameter("world_size", Vector2(MW, MH))
+	sm.set_shader_parameter("water", Color("1c4054"))
 	cr.material = sm
 	add_child(cr)
 	minimap.rect = cr
@@ -113,12 +111,21 @@ func _update_minimap() -> void:
 	sm.set_shader_parameter("span_uv", Vector2(span_m / MW, span_m / MH))
 	sm.set_shader_parameter("rot", Game.main.camera.yaw - PI)
 	var w := Game.wanted
-	if w.stars > 0 and w.searching:
+	if w.stars > 0 and (w.searching or w.state == "response"):
 		sm.set_shader_parameter("search_uv", Vector2((w.last.x - MX0) / MW, (w.last.z - MZ0) / MH))
-		sm.set_shader_parameter("search_r", Game.police.search_radius())
-		sm.set_shader_parameter("search_color", Color(1, 0.23, 0.3, 0.3) if int(Game.t * 2.0) % 2 else Color(0.23, 0.42, 1, 0.3))
+		sm.set_shader_parameter("search_r", Game.police.search_radius() if w.searching else 22.0)
+		sm.set_shader_parameter("search_color", (Color(1, 0.23, 0.3, 0.3) if int(Game.t * 2.0) % 2 else Color(0.23, 0.42, 1, 0.3)) if w.searching else Color(1, 1, 1, 0.18))
 	else:
 		sm.set_shader_parameter("search_r", 0.0)
+	var hz = null
+	for z in Game.hot_zones:
+		if hz == null or U.d2(z.pos, pp) < U.d2(hz.pos, pp):
+			hz = z
+	if hz != null:
+		sm.set_shader_parameter("hot_uv", Vector2((hz.pos.x - MX0) / MW, (hz.pos.z - MZ0) / MH))
+		sm.set_shader_parameter("hot_r", hz.r)
+	else:
+		sm.set_shader_parameter("hot_r", 0.0)
 
 func blips() -> Array:
 	var out := []
@@ -215,13 +222,38 @@ func update_state(dt: float) -> void:
 		timers.append(["BEING ARRESTED %d%%" % roundi(P.bust_t / 2.2 * 100.0), "bad"])
 	var w := Game.wanted
 	var pp: Vector3 = P.in_car.global_position if P.in_car else P.global_position
-	if w.stars > 0 and w.searching:
-		if U.d2(pp, w.last) > Game.police.search_radius():
-			timers.append(["LOSING THEM %d%%" % roundi(w.clear / (7.0 + w.stars * 3.0) * 100.0), "warn"])
-		else:
-			timers.append(["SEARCH AREA - leave the circle or hide", "warn"])
+	var caller = Game.main.npc_ai.active_caller()
+	if caller != null:
+		var cp: float = Game.main.npc_ai.caller_progress(caller)
+		if cp >= 0.0:
+			timers.append(["WITNESS CALLING 911 %d%% - %d m" % [roundi(cp * 100.0), roundi(U.d2(caller.global_position, pp))], "bad"])
+	match w.state:
+		"response":
+			if w.eta > 0.5:
+				timers.append(["POLICE RESPONDING - ETA " + U.fmt_time(w.eta), "bad"])
+			elif w.eta >= 0.0:
+				timers.append(["POLICE ON SCENE - suspect unknown", "warn"])
+			else:
+				timers.append(["POLICE DISPATCHED", "warn"])
+		"pursuit":
+			timers.append(["PURSUIT - break line of sight", "bad"])
+		"lost":
+			timers.append(["VISUAL LOST - keep moving", "warn"])
+		"search":
+			if U.d2(pp, w.last) > Game.police.search_radius():
+				timers.append(["LOSING THEM %d%%" % roundi(w.clear / (8.0 + w.stars * 4.0) * 100.0), "warn"])
+			else:
+				timers.append(["%s %d%%" % ["HIDDEN" if w.hidden else "SEARCH AREA - leave or hide", roundi(w.clear / (8.0 + w.stars * 4.0) * 100.0)], "good" if w.hidden else "warn"])
 	if w.stars == 0 and w.get("suspicion", 0.0) > 0.05:
 		timers.append(["POLICE SUSPICIOUS %d%%" % roundi(w.suspicion * 100.0), "warn"])
+	if Game.police.in_hot_zone(pp):
+		timers.append(["HOT ZONE - police are watching", "warn"])
+	if P.in_car and P.in_car.crouched:
+		timers.append(["HIDING IN CAR", "good"])
+	if P.surrendering:
+		timers.append(["SURRENDERING - don't move", "warn"])
+	if P.in_car and P.in_car.tracker and not P.in_car.personal and P.in_car.kind != "police":
+		timers.append(["STOLEN CAR HAS A TRACKER %d%%" % roundi(minf(1.0, Game.police.tracker_t / 25.0) * 100.0), "warn"])
 	if Game.sites.size() > 2 and U.d2(P.global_position, Game.sites[2].door) < 70.0 and Game.robbery.truck.state == "wait":
 		timers.append(["ARMORED TRUCK IN " + U.fmt_time(Game.robbery.truck.t), ""])
 	if Game.robbery.spray.busy > 0.0:
@@ -252,6 +284,9 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_M: P.toggle_mask()
 			KEY_V, KEY_TAB: Game.focus = not Game.focus
 			KEY_T: open_screen("map")
+			KEY_G: Game.main.npc_ai.shout()
+			KEY_B: P.give_up()
+			KEY_H: P.toggle_hide()
 	elif event is InputEventMouseMotion and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED and Game.running and not Game.paused:
 		Game.main.camera.look(event.relative.x, event.relative.y)
 	elif event is InputEventMouseButton and event.pressed and event.device != InputEvent.DEVICE_ID_EMULATION and not show_touch:
@@ -328,16 +363,17 @@ func _build_screens() -> void:
 	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	v.add_child(sc)
-	var tips := _label("""- Three targets: Quik-E 24/7 ($), Diamond Dash Jewelers ($$) and Leonida Federal Savings ($$$).
+	var tips := _label("""- Key Lento, Leonida Keys. You start at the stilt house on the bay; your pickup is parked on the shore.
+- Three targets in town, east along Route 1: 24/7 Supermarket ($), Diamond Dash Jewelers ($$), Leonida Federal Savings ($$$).
 - Wear the mask inside or cameras and witnesses get your face. Change outfits in your car's trunk.
-- Aim at clerks to make them empty the register; hold guards at gunpoint until they surrender.
-- FOCUS reveals cameras, alarm panels and where to find safe codes. Destroy the footage before leaving.
-- The bank vault only opens for the armored truck. Hit it while the doors are open - don't get locked in.
-- Wanted: break line of sight and leave the search circle. Parking garages hide you.
-- Sell jewelry and launder marked bills at Yasmani's pawn shop (F), then deposit cash at an ATM.""", 16, Color(1, 1, 1, 0.85))
+- SHOUT puts a crowd on the floor. Cover them, zip-tie them or let your partner hold them - unwatched hostages sneak out or call 911.
+- Witnesses phone the police: aim at them or shout to stop the call. Hollow stars = police responding, they don't know who you are yet.
+- Once spotted: break line of sight, leave the red search area or hide (HIDE in a parked car, the garage). Escapes leave a hot zone.
+- 3+ stars bring K9 units and roadblocks, 4+ SWAT, spike strips and the helicopter. GIVE UP to surrender (not as a Psycho).
+- Sell loot at Yasmani's pawn shop in town or to Brian at the boat works (F), then deposit cash at an ATM.""", 16, Color(1, 1, 1, 0.85))
 	tips.custom_minimum_size = Vector2(760, 0)
 	sc.add_child(tips)
-	var keys := _label("Keyboard: WASD move/drive, mouse look, E/Q/Z actions, R gun, F or click fire, M mask, V focus, T map, Space handbrake, Shift run.", 13, Color(1, 1, 1, 0.5))
+	var keys := _label("Keyboard: WASD move/drive, mouse look, E/Q/Z actions, R gun, F or click fire, M mask, V focus, G shout, B give up, H hide in car, T map, Space handbrake, Shift run.", 13, Color(1, 1, 1, 0.5))
 	keys.visible = not show_touch
 	v.add_child(keys)
 	start_btn = _button("START", _start_game, true)
@@ -420,7 +456,7 @@ func _start_game() -> void:
 	Game.paused = false
 	if not Game.running:
 		Game.running = true
-		Game.notify("Head west to Quik-E 24/7 - an easy first score. Mask up at the door.")
+		Game.notify("Take the pickup east along Route 1 into town - the 24/7 Supermarket is an easy first score.")
 		get_tree().create_timer(4.5).timeout.connect(func(): Game.notify("Tip: tap FOCUS to reveal cameras, alarm panels and safe codes"))
 
 func _open_screen_name() -> String:
@@ -508,6 +544,8 @@ func render_shop() -> void:
 			owned = "  (%d owned)" % Game.tools.c4
 		elif t.id == "armor":
 			owned = "  (%d/50)" % roundi(P.armor)
+		elif t.id == "zipties":
+			owned = "  (%d owned)" % Game.tools.get("zipties", 0)
 		elif Game.tools[t.id]:
 			owned = "  (owned)"
 		var dis: bool = (not t.get("stack", false) and Game.tools[t.id]) or (t.id == "armor" and P.armor >= 50.0)
@@ -526,7 +564,7 @@ func _sell(type: String, rate: float) -> void:
 	Game.money.cash += got
 	Game.stats.laundered += got
 	Sfx.play("cash")
-	Game.notify("Yasmani paid %s cash" % U.money(got), "good")
+	Game.notify("The fence paid %s cash" % U.money(got), "good")
 	render_shop()
 
 func _buy(t: Dictionary) -> void:
@@ -536,6 +574,7 @@ func _buy(t: Dictionary) -> void:
 	else:
 		match t.id:
 			"c4": Game.tools.c4 += 1
+			"zipties": Game.tools.zipties = Game.tools.get("zipties", 0) + 4
 			"armor":
 				Game.player.armor = 50.0
 				Game.tools.armor = true
@@ -578,6 +617,9 @@ class MapOverlay extends Control:
 		var yaw: float = P.in_car.yaw() if P.in_car else P.yaw
 		var xf := Transform2D(-yaw + PI, sp)
 		draw_colored_polygon(xf * PackedVector2Array([Vector2(0, -11), Vector2(8, 8), Vector2(0, 4), Vector2(-8, 8)]), Color.WHITE)
-		if Game.wanted.stars > 0 and Game.wanted.searching:
+		if Game.wanted.stars > 0 and (Game.wanted.searching or Game.wanted.state == "response"):
 			var c: Vector2 = to.call(Game.wanted.last.x, Game.wanted.last.z)
-			draw_circle(c, Game.police.search_radius() / Hud.MW * w, Color(1, 0.25, 0.3, 0.22))
+			draw_circle(c, maxf(4.0, (Game.police.search_radius() if Game.wanted.searching else 22.0) / Hud.MW * w), Color(1, 0.25, 0.3, 0.22) if Game.wanted.searching else Color(1, 1, 1, 0.2))
+		for z in Game.hot_zones:
+			var c: Vector2 = to.call(z.pos.x, z.pos.z)
+			draw_arc(c, maxf(4.0, z.r / Hud.MW * w), 0, TAU, 32, Color(1, 0.55, 0.2, 0.8), 2.0, true)

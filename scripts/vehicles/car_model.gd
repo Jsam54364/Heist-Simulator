@@ -175,6 +175,8 @@ static func build(v: Vehicle) -> void:
 		col = Color("f4f4f4")
 	elif kind == "truck":
 		col = Color("4d5a4a")
+	elif kind == "swat":
+		col = Color("1b2a44")
 	paint.albedo_color = col
 	paint.metallic = 0.55
 	paint.roughness = 0.3
@@ -185,7 +187,7 @@ static func build(v: Vehicle) -> void:
 	var mats := {"paint": paint, "glass": shared.glass, "decal": shared.decal, "parts": shared.parts}
 	var P := Parts.new()
 	var light_y := 0.7
-	if kind == "truck":
+	if kind in ["truck", "swat"]:
 		P.box("paint", Vector3(W, 1.0, L), Vector3(0, 0.95, 0))
 		P.box("paint", Vector3(W, 1.8, 4.2), Vector3(0, 2.25, -1.0))
 		P.box("glass", Vector3(W - 0.1, 1.2, 1.6), Vector3(0, 1.95, 2.1))

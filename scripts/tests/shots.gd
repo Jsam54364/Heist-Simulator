@@ -4,14 +4,23 @@ extends Node
 ## Writes /tmp/hs_view_*.png
 
 var main: Node
-const VIEWS := [
-	["spawn", Vector3(74, 0, -7.6), -PI / 2, 0.25, false],
-	["street", Vector3(0, 0, -7.5), PI * 0.25, 0.16, false],
-	["store", Vector3(20, 0, -10.5), PI, 0.2, true],
-	["bank", Vector3(25, 0, 12.5), 0.0, 0.15, false],
-	["beach", Vector3(165, 0, 20), PI / 2, 0.2, false],
-	["drive", Vector3(50, 0, -3), -PI / 2, 0.2, false],
-]
+## [name, position, camera yaw, pitch, aim+focus] - built at runtime from the Key Lento layout
+func views(gen: KeysGen) -> Array:
+	var sh: Vector2 = gen.stilt_house.get_center()
+	return [
+		["spawn", gen.spawn, PI, 0.2, false],
+		["stilt_house", Vector3(sh.x + 6.0, 0, sh.y + 40.0), PI + 0.15, 0.12, false],
+		["street", Vector3(0, 0, -7.5), PI * 0.25, 0.16, false],
+		["store", Vector3(20, 0, -10.5), PI, 0.2, true],
+		["bank", Vector3(25, 0, 12.5), 0.0, 0.15, false],
+		["strip", Vector3(470, 0, gen.rc(470) + 8.5), PI / 2 + 0.2, 0.14, false],
+		["marina", Vector3(-455, 0, gen.rc(-500) - gen.north_w(-500) + 70.0), PI + 0.5, 0.16, false],
+		["whale", Vector3(738, 0, gen.rc(738) + 2.0), -2.4, 0.08, false],
+		["motel", Vector3(580, 0, gen.rc(580) - 2.0), 0.0, 0.14, false],
+		["canals", Vector3(-800, 0, gen.rc(-800) - 30.0), PI, 0.3, false],
+		["bridge", Vector3(-1230, 0, gen.rc(-1230) + 2.0), -PI / 2, 0.1, false],
+		["drive", Vector3(-640, 0, gen.rc(-640) + 3.0), PI / 2, 0.2, false],
+	]
 
 func _ready() -> void:
 	main = load("res://scenes/main.tscn").instantiate()
@@ -31,7 +40,8 @@ func _run() -> void:
 	Settings.apply()
 	main.hud._start_game()
 	var P: Player = Game.player
-	for v in VIEWS:
+	for v in views(main.world_gen):
+		main.streamer.prime(v[1])
 		if v[0] == "drive":
 			var car: Vehicle = Game.player_car
 			car.place(v[1], v[2])

@@ -313,7 +313,7 @@ func spawn(site: Dictionary, role: String, x: float, z: float, opts := {}) -> Ch
 # ---------- CONVENIENCE STORE (LOW) ----------
 func build_store() -> void:
 	var S: Dictionary = R.make_site({
-		"id": "store", "name": "Quik-E 24/7", "sec": "LOW", "bounds": Rect2(12, -21, 16, 12),
+		"id": "store", "name": "24/7 Supermarket", "sec": "LOW", "bounds": Rect2(12, -21, 16, 12),
 		"door": Vector3(20, 0, -7.4), "crowd": Vector3(18.5, 0, -11), "alarm_stars": 2, "leave_stars": 1, "payout": "$3k-6k cash",
 		"public": Rect2(13, -15.8, 7, 5.8),
 	})
@@ -328,7 +328,7 @@ func build_store() -> void:
 	wall_z(22, -21, -16.5, [], 4, null, 0.3, col(0xece8e1))
 	add_building("store", 12, 28, -21, -9)
 	upper(12, 28, -21, -9, 2, Mats.m("facade_stucco"), cream)
-	sign_label("QUIK-E 24/7", 20, 5.2, -8.55, Color("ffcf33"), 1.4)
+	sign_label("24/7 SUPERMARKET", 20, 5.2, -8.55, Color("ffcf33"), 1.4)
 	var counter := Mats.m("counter")
 	B.box(23.75, 0, -12, 5.5, 1.0, 0.8, counter)
 	B.box(16, 0, -12.7, 4, 1.5, 0.6, Mats.m("plaster"), {"color": col(0xd9dce0)})
@@ -739,28 +739,43 @@ func atm(x: float, z: float, yaw: float) -> void:
 					Sfx.play("cash"))]
 			return [act("No cash on hand to deposit", 0.0, null, {"disabled": true})]})
 
+## Jason's stilt house out on the bay (GTA 6's opening safehouse): the safehouse room
+## sits on a dock platform at the end of a long boardwalk. Coordinates are local to the
+## house centre (the old town safehouse layout, moved onto the water).
 func build_safehouse() -> void:
-	B.box(74, 0.15, -16.5, 16, 0.03, 15, Mats.m("wood_planks"), {"layer": "ground", "shadow": false})
-	var mint := col(0xbfeee0)
-	wall_x(-9, 66, 82, [[72.5, 75.5]], 4, null, 0.3, mint)
-	wall_x(-24, 66, 82, [], 4, null, 0.3, mint)
-	wall_z(66, -24, -9, [], 4, null, 0.3, mint)
-	wall_z(82, -24, -9, [], 4, null, 0.3, mint)
-	add_building("safehouse", 66, 82, -24, -9)
-	upper(66, 82, -24, -9, 3, Mats.m("facade_stucco"), mint)
-	sign_label("SAFEHOUSE", 74, 5.2, -8.55, Color.WHITE, 1.2)
-	B.box(79.5, 0, -21.5, 3, 0.6, 2, Mats.m("paint"), {"color": col(0x3d5a80)})
-	B.box(67.2, 0, -21.5, 1, 2.2, 3, Mats.m("wood_planks"), {"color": col(0xd9c2a8)})
-	B.box(72, 0.15, -14, 3.4, 0.5, 1.1, Mats.m("paint"), {"color": col(0x3d5a80)})
-	B.box(72, 0.65, -14.5, 3.4, 0.6, 0.25, Mats.m("paint"), {"color": col(0x3d5a80), "collide": false})
-	B.box(72, 0.15, -18.5, 1.8, 0.55, 0.5, Mats.m("paint"), {"color": col(0x2a2d31)})
-	B.box(72, 0.7, -18.5, 1.6, 0.9, 0.08, Mats.m("paint_gloss"), {"color": col(0x101215), "collide": false})
-	B.box(72, 0.17, -16.2, 4, 0.02, 3, Mats.m("carpet"), {"collide": false, "shadow": false})
-	B.box(80.8, 0.15, -12, 1.2, 0.95, 4, Mats.m("marble"))
-	lights(66, 82, -24, -9, 4)
-	inter({"pos": Vector3(68.6, 0, -21.5), "r": 1.8, "focus": "WARDROBE",
+	var c: Vector2 = Game.main.world_gen.stilt_house.get_center()
+	var ox := c.x - 74.0
+	var oz := c.y + 16.5
+	var fy := 0.25   # dock deck height
+	var P := func(x: float, z: float) -> Vector3: return Vector3(x + ox, 0, z + oz)
+	B.box(74 + ox, fy, -16.5 + oz, 16, 0.03, 15, Mats.m("wood_planks"), {"layer": "ground", "shadow": false, "lod": "interior"})
+	var mint := col(0xbfe3e0)
+	wall_x(-9 + oz, 66 + ox, 82 + ox, [[72.5 + ox, 75.5 + ox]], 3.6, null, 0.3, mint)
+	wall_x(-24 + oz, 66 + ox, 82 + ox, [], 3.6, null, 0.3, mint)
+	wall_z(66 + ox, -24 + oz, -9 + oz, [], 3.6, null, 0.3, mint)
+	wall_z(82 + ox, -24 + oz, -9 + oz, [], 3.6, null, 0.3, mint)
+	add_building("safehouse", 66 + ox, 82 + ox, -24 + oz, -9 + oz)
+	# low hip roof with wide eaves (Keys stilt-house style), tin grey
+	var tin := col(0x8a9aa6)
+	for sd in [-1.0, 1.0]:
+		B.box(74 + ox, 4.1, -16.5 + oz + sd * 4.1, 17.6, 0.16, 9.2, Mats.m("paint"), {"basis": Basis(Vector3.RIGHT, sd * 0.42), "color": tin, "collide": false})
+	B.box(74 + ox, 3.6, -16.5 + oz, 16.4, 0.25, 15.4, Mats.m("paint"), {"color": Color(0.96, 0.96, 0.94), "collide": false})
+	sign_label("SAFEHOUSE", 74 + ox, 3.2, -8.75 + oz, Color.WHITE, 0.8)
+	B.box(79.5 + ox, fy, -21.5 + oz, 3, 0.6, 2, Mats.m("paint"), {"color": col(0x3d5a80)})
+	B.box(67.2 + ox, fy, -21.5 + oz, 1, 2.2, 3, Mats.m("wood_planks"), {"color": col(0xd9c2a8)})
+	B.box(72 + ox, fy, -14 + oz, 3.4, 0.5, 1.1, Mats.m("paint"), {"color": col(0x3d5a80)})
+	B.box(72 + ox, fy + 0.5, -14.5 + oz, 3.4, 0.6, 0.25, Mats.m("paint"), {"color": col(0x3d5a80), "collide": false})
+	B.box(72 + ox, fy, -18.5 + oz, 1.8, 0.55, 0.5, Mats.m("paint"), {"color": col(0x2a2d31)})
+	B.box(72 + ox, fy + 0.55, -18.5 + oz, 1.6, 0.9, 0.08, Mats.m("paint_gloss"), {"color": col(0x101215), "collide": false})
+	B.box(72 + ox, fy + 0.02, -16.2 + oz, 4, 0.02, 3, Mats.m("carpet"), {"collide": false, "shadow": false})
+	B.box(80.8 + ox, fy, -12 + oz, 1.2, 0.95, 4, Mats.m("marble"))
+	# porch railing either side of the door
+	for x in [[66.0, 72.3], [75.7, 82.0]]:
+		B.box((x[0] + x[1]) * 0.5 + ox, fy, -6.0 + oz, x[1] - x[0], 1.0, 0.1, Mats.m("wood_planks"), {"collide": false, "lod": "detail", "color": Color(0.95, 0.95, 0.92)})
+	lights(66 + ox, 82 + ox, -24 + oz, -9 + oz, 4)
+	inter({"pos": P.call(68.6, -21.5), "r": 1.8, "focus": "WARDROBE",
 		"actions": func(): return [act("Change outfit", 1.5, func(): Game.main.player_ctl.change_outfit("wardrobe"))]})
-	inter({"pos": Vector3(79.5, 0, -19.6), "r": 1.8, "focus": "BED",
+	inter({"pos": P.call(79.5, -19.6), "r": 1.8, "focus": "BED",
 		"actions": func():
 			if Game.wanted.stars > 0:
 				return [act("Can't rest while wanted", 0.0, null, {"disabled": true})]
@@ -768,9 +783,26 @@ func build_safehouse() -> void:
 				Game.player.hp = 100.0
 				Game.heat.face = maxf(0.0, Game.heat.face - 120.0)
 				Game.heat.outfit_t = maxf(0.0, Game.heat.outfit_t - 120.0)
+				Game.heat.weapon = 0.0
 				if Game.heat.outfit_t <= 0.0:
 					Game.heat.outfit = -1
+				Game.hot_zones.clear()
 				Game.notify("Rested. Health restored, heat cooled off.", "good"))]})
+
+## Brian's Boat Works: Brian buys hot goods no questions asked (second fence, out of town).
+func build_brian() -> void:
+	var gen: KeysGen = Game.main.world_gen
+	for l in gen.lots:
+		if not l.get("brian", false):
+			continue
+		var r: Rect2 = l.rect
+		var p := Vector3(r.get_center().x + 6.0, 0, r.end.y + 1.8)
+		Game.main.spawn_char("fence", p, {"yaw": PI, "color": col(0xd9c27a)})
+		inter({"pos": p + Vector3(0, 0, 1.2), "r": 2.4, "focus": "BRIAN", "focus_color": Color("7fd4ff"),
+			"actions": func():
+				if Game.wanted.stars > 0:
+					return [act("Brian won't deal while you're wanted", 0.0, null, {"disabled": true})]
+				return [act("Talk to Brian (fence & gear)", 0.0, func(): Game.shop_requested.emit())]})
 
 func build_garage() -> void:
 	B.box(-27, 0.15, 25, 26, 0.03, 26, Mats.m("concrete"), {"layer": "ground", "shadow": false, "color": col(0x9a9a96)})
@@ -820,7 +852,7 @@ func build_spray() -> void:
 	B.box(70, 3.6, 12, 12, 0.4, 0.3, Mats.m("paint"), {"color": col(0xff6fb5)})
 	B.box(70, 4.0, 18, 12.3, 0.3, 12.3, Mats.m("roof_gravel"))
 	add_building("spray", 64, 76, 12, 24)
-	sign_label("PAY 'N' SPRAY", 70, 4.8, 11.55, Color("ff6fb5"), 1.2)
+	sign_label("CHIP'S BODY SHOP", 70, 4.8, 11.55, Color("ff6fb5"), 1.2)
 	var door := MeshInstance3D.new()
 	var dm := BoxMesh.new()
 	dm.size = Vector3(11.6, 2.4, 0.15)
@@ -846,11 +878,14 @@ const INTERIORS := [Rect2(12, -21, 16, 12), Rect2(-34, -23, 18, 14), Rect2(13, 9
 
 func build() -> void:
 	B.interior_rects = INTERIORS.duplicate()
+	var c: Vector2 = Game.main.world_gen.stilt_house.get_center()
+	B.interior_rects[4] = Rect2(c.x - 8.0, c.y - 7.5, 16, 15)
 	build_store()
 	build_jewelry()
 	build_bank()
 	build_fence()
 	build_safehouse()
+	build_brian()
 	build_garage()
 	build_spray()
 	cur_group = null
