@@ -155,6 +155,21 @@ func _run() -> void:
 		P.start_action(acts.actions[0], acts.target)
 		await wait(80)
 	check(Robbery.bag_value(Game.bag) > 0.0, "jewelry in bag (%s)" % U.money(Robbery.bag_value(Game.bag)))
+	# --- armored truck -> vault opens ---
+	Game.police.reset()
+	P.teleport(Vector3(25, 0, 12))
+	Game.robbery.truck.t = 0.5
+	var opened := false
+	var truck_seen := false
+	for i in 60 * 70:
+		await get_tree().physics_frame
+		if Game.robbery.truck.car != null:
+			truck_seen = true
+		if Game.robbery.vault.state in ["opening", "open"]:
+			opened = true
+			break
+	check(truck_seen, "armored truck spawned (state %s)" % Game.robbery.truck.state)
+	check(opened, "vault opened for the delivery (vault %s, truck %s)" % [Game.robbery.vault.state, Game.robbery.truck.state])
 	# --- bank interior shot ---
 	Game.police.reset()
 	P.teleport(Vector3(25, 0, 12))

@@ -130,14 +130,14 @@ func _touch_down(index: int, p: Vector2) -> void:
 		touches[index] = {"kind": "btn", "id": b.id}
 		_press(b.id, true)
 		return
+	if p.distance_to(MINI_POS + Vector2(MINI_SIZE, MINI_SIZE) * 0.5) < MINI_SIZE * 0.5:
+		touches[index] = {"kind": "none"}
+		map_pressed.emit()
+		return
 	if p.x < size.x * 0.42 and p.y > 110:
 		touches[index] = {"kind": "joy"}
 		joy = {"active": true, "origin": p, "pos": p, "index": index}
 		_update_joy()
-		return
-	if p.distance_to(MINI_POS + Vector2(MINI_SIZE, MINI_SIZE) * 0.5) < MINI_SIZE * 0.5:
-		touches[index] = {"kind": "none"}
-		map_pressed.emit()
 		return
 	touches[index] = {"kind": "look"}
 
