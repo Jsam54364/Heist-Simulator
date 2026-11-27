@@ -21,7 +21,20 @@ var home_yaw := 0.0
 var dead := false
 var ko := false
 var hidden := false
-var in_car = null
+var in_car = null:
+	set(v):
+		if v == in_car:
+			return
+		_leave_seat()
+		in_car = v
+		if v != null:
+			_take_seat()
+var seat := -1             # index in in_car.occupants (0 = driver)
+var crouching := false
+var aim_pitch := 0.0       # -1 (down) .. 1 (up), used while aiming
+var air_y := 0.0           # jump height above the ground (visual; movement stays planar)
+var air_v := 0.0
+var _jump_wait := -1.0
 var armed := false
 var show_gun := false
 var speed_now := 0.0
@@ -52,14 +65,11 @@ var mem := {}
 
 # model
 var inner: Node3D
-var body_mesh: MeshInstance3D
-var arm_l: Node3D
-var arm_r: Node3D
-var arm_meshes: Array
+var model: HumanModel
 var gun: MeshInstance3D
 var mask_mesh: MeshInstance3D
-var ranges := {}
 var bag_mesh: MeshInstance3D
+var look := {}
 
 func setup(p_role: String, pos: Vector3, opts := {}) -> Character:
 	role = p_role
@@ -78,10 +88,6 @@ func setup(p_role: String, pos: Vector3, opts := {}) -> Character:
 ## 2nd frame, move without collision), 2 far (animate every 4th frame, small parts hidden).
 var lod := 0
 var far_move := false
-var body_near: Mesh
-var body_far: Mesh
-var ranges_far: Dictionary
-var meshes: Array = []
 var _shadow_on := true
 var _anim_acc := 0.0
 var _anim_n := 0
@@ -93,16 +99,9 @@ func set_lod(level: int, shadow: bool) -> void:
 		var was := lod
 		lod = level
 		far_move = level >= 1 and role != "player"
-		if (was == 0) != (level == 0):
-			# beyond ~30 m: arms are baked into the body mesh (1 draw call per person)
-			body_mesh.mesh = body_near if level == 0 else body_far
-			for am in arm_meshes:
-				am.visible = level == 0
 	if shadow != _shadow_on:
 		_shadow_on = shadow
-		var mode := GeometryInstance3D.SHADOW_CASTING_SETTING_ON if shadow else GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
-		for m in meshes:
-			m.cast_shadow = mode
+		model.set_shadow(shadow)
 
 func _ready() -> void:
 	motion_mode = CharacterBody3D.MOTION_MODE_FLOATING
@@ -115,38 +114,86 @@ func _ready() -> void:
 	cs.shape = cap
 	cs.position.y = 0.9
 	add_child(cs)
-	var color: Color = ROLE_COLORS.get(role, Color("aaaaaa"))
-	if mem.has("color"):
-		color = mem.color
-	var leg: Color = Color("141a2a") if role in ["cop", "guard"] else [Color("3a3f47"), Color("2b3a55"), Color("4a4036"), Color("2f2f33")][randi() % 4]
-	var m: Dictionary = CharModel.build(self, role, color, leg, CharModel.SKIN[randi() % CharModel.SKIN.size()])
-	inner = m.inner
-	body_mesh = m.body
-	ranges = m.ranges
-	body_near = body_mesh.mesh
-	body_far = m.body_far
-	ranges_far = m.ranges_far
-	arm_l = m.arm_l
-	arm_r = m.arm_r
-	arm_meshes = m.arm_meshes
-	gun = m.gun
-	mask_mesh = m.mask
+	var o := {"color": mem.get("color", Color(0, 0, 0, 0)), "swat": mem.get("swat", false)}
+	if role == "player":
+		o.top_part = Game.OUTFITS[Game.outfit].get("part", "tee")
+	if mem.has("female"):
+		o.female = mem.female
+	look = Outfits.for_role(role, o)
+	model = HumanModel.new()
+	model.name = "Model"
+	add_child(model)
+	model.build(look)
+	inner = model
+	gun = model.gun
+	mask_mesh = null
 	rotation.y = yaw
 	walk_phase = randf() * 6.0
-	for mi in inner.find_children("*", "MeshInstance3D", true, false):
-		mi.layers = 1 | 4   # world + "characters" render layer (room lights reach people)
-		meshes.append(mi)
 
 func set_outfit_color(c: Color) -> void:
-	body_near = CharModel.recolor_mesh(body_near, ranges, c)
-	body_far = CharModel.recolor_mesh(body_far, ranges_far, c)
-	body_mesh.mesh = body_far if lod >= 1 else body_near
-	for am in arm_meshes:
-		CharModel.recolor(am, am.get_meta("ranges"), c)
+	model.set_color("top", c)
+
+## jump: a short anticipation (jump_start one-shot) then lift-off; landing plays jump_land
+func jump(v := 4.3) -> void:
+	if air_y > 0.0 or _jump_wait >= 0.0 or dead or ko or hidden:
+		return
+	_jump_wait = 0.09
+	model.shot("jump_start")
+
+func airborne() -> bool:
+	return air_y > 0.0 or _jump_wait >= 0.0
+
+func _update_air(dt: float) -> void:
+	if _jump_wait >= 0.0:
+		_jump_wait -= dt
+		if _jump_wait < 0.0:
+			air_v = 4.3
+			air_y = 0.001
+	if air_y > 0.0:
+		air_v -= 13.0 * dt
+		air_y += air_v * dt
+		if air_y <= 0.0:
+			air_y = 0.0
+			air_v = 0.0
+			model.shot("jump_land")
+
+## seats: 0 driver, 1 front passenger, 2-3 rear. Seated people stay visible, posed in the car.
+func _take_seat() -> void:
+	var car = in_car
+	if not ("occupants" in car):
+		return
+	var want := 0
+	if role == "player":
+		var cur = car.occupants[0]
+		if cur != null and is_instance_valid(cur) and cur != self:
+			cur.seat = -1
+			car.occupants[0] = null
+			for j in range(1, car.occupants.size()):
+				if car.occupants[j] == null:
+					car.occupants[j] = cur
+					cur.seat = j
+					break
+	elif car.driver == "player" or car == Game.player_car:
+		want = 1
+	for i in range(want, car.occupants.size()):
+		if car.occupants[i] == null or not is_instance_valid(car.occupants[i]):
+			car.occupants[i] = self
+			seat = i
+			return
+	seat = -1
+
+func _leave_seat() -> void:
+	if in_car != null and is_instance_valid(in_car) and seat >= 0 and "occupants" in in_car and seat < in_car.occupants.size():
+		if in_car.occupants[seat] == self:
+			in_car.occupants[seat] = null
+	seat = -1
+
+func riding() -> bool:
+	return hidden and in_car != null and is_instance_valid(in_car) and seat >= 0 and not in_car.removed
 
 func set_hidden(h: bool) -> void:
 	hidden = h
-	visible = not h
+	visible = not h or riding()
 	collision_layer = 0 if h else Game.L_CHAR
 	collision_mask = 0 if h else (Game.L_WORLD | Game.L_GLASS | Game.L_VEHICLE | Game.L_SHORE)
 
@@ -225,6 +272,9 @@ func damage(dmg: float, src = null) -> void:
 	if dead:
 		return
 	hp -= dmg
+	if model and not hidden:
+		model.shot("hit")
+		_flash = 1.0
 	if hp <= 0.0:
 		hp = 0.0
 		dead = true
@@ -238,9 +288,14 @@ func knock_out() -> void:
 	collision_layer = 0
 
 # ---------- animation ----------
+var _flash := 0.0
+
 func _process(dt: float) -> void:
-	if hidden or not visible:
+	var ride := riding()
+	if (hidden and not ride) or (not visible and not ride):
 		return
+	if ride and not visible:
+		visible = true
 	if lod > 0:
 		_anim_acc += dt
 		_anim_n += 1
@@ -249,45 +304,44 @@ func _process(dt: float) -> void:
 		dt = _anim_acc
 		_anim_acc = 0.0
 		_anim_n = 0
+	if _flash > 0.0:
+		_flash = maxf(0.0, _flash - dt * 5.0)
+		model.flash(_flash * 0.6)
+	_update_air(dt)
+	var mode := "loco"
+	var stance := "stand"
+	var opts := {"gun": false}
+	if ride:
+		var car = in_car
+		var st: Transform3D = car.seat_transform(seat)
+		inner.global_transform = car.get_global_transform_interpolated() * st
+		mode = "drive" if seat == 0 else "sit"
+		opts.steer = -clampf(car.steer / 0.6, -1.0, 1.0)
+		opts.speed = 0.0
+		model.drive(dt, mode, stance, inner.global_position, yaw, opts)
+		return
 	rotation.y = yaw
-	var target_y := Game.ground_y(global_position.x, global_position.z)
-	var al := 0.0
-	var ar := 0.0
-	var y := 0.0
-	var rx := 0.0
-	var moving := speed_now > 0.3
-	if moving:
-		walk_phase += dt * (13.0 if speed_now > 4.0 else 8.0)
-	var sw := sin(walk_phase) * (0.9 if speed_now > 4.0 else 0.5) if moving else 0.0
-	var p := "down" if (dead or ko) else pose
-	match p:
-		"handsup":
-			al = PI; ar = PI
-		"phone":
-			ar = -2.5; al = -0.35
-		"film":
-			al = -1.45; ar = -1.45
-		"wave":
-			ar = PI * 0.85 + sin(Game.t * 12.0) * 0.35
-		"cower":
-			al = PI * 0.85; ar = PI * 0.85; y = -0.45
-		"kneel":
-			al = PI; ar = PI; y = -0.45
-		"aim":
-			ar = -PI / 2; al = -PI / 2.4
-		"down":
-			rx = -PI / 2; y = 0.18
-		"work":
-			walk_phase += dt * 4.0
-			al = -0.9 + sin(walk_phase * 2) * 0.2
-			ar = -0.9 - sin(walk_phase * 2) * 0.2
-		_:
-			al = sw; ar = -sw
-	var k := minf(1.0, dt * 14.0)
-	arm_l.rotation.x = lerpf(arm_l.rotation.x, al, k)
-	arm_r.rotation.x = lerpf(arm_r.rotation.x, ar, k)
-	var bob := absf(sin(walk_phase)) * 0.05 if moving else 0.0
-	inner.position.y = lerpf(inner.position.y, target_y + y + bob, minf(1.0, dt * 12.0))
-	inner.rotation.x = lerpf(inner.rotation.x, rx, minf(1.0, dt * 10.0))
-	inner.position.z = 0.9 if rx != 0.0 else 0.0
-	gun.visible = not dead and not ko and (pose == "aim" or (armed and show_gun))
+	inner.position = Vector3(0, Game.ground_y(global_position.x, global_position.z) + air_y, 0)
+	inner.rotation = Vector3.ZERO
+	if dead or ko:
+		mode = "dead"
+	elif air_y > 0.18:
+		mode = "air"
+	else:
+		match pose:
+			"handsup", "cower", "phone", "film", "wave", "work", "text":
+				mode = pose
+			"kneel":
+				mode = "tied" if mem.get("tied", false) else "kneel"
+			"aim":
+				stance = "crouch_aim" if crouching else "aim"
+				opts.pitch = aim_pitch
+			_:
+				if crouching:
+					stance = "crouch"
+				elif speed_now > 4.4 and state == "flee":
+					stance = "panic"
+		if mode == "phone" and mem.get("texter", false):
+			mode = "text"
+	opts.gun = not dead and not ko and (pose == "aim" or (armed and show_gun))
+	model.drive(dt, mode, stance, global_position, yaw, opts)

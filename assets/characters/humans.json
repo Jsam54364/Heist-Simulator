@@ -1,0 +1,375 @@
+{
+ "m": {
+  "parts": {
+   "body": {
+    "slot": 0,
+    "kind": "body"
+   },
+   "eyes": {
+    "slot": 6,
+    "kind": "eyes"
+   },
+   "tee": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.29493139494678583,
+    "source": "male_casualsuit04",
+    "bit": 10
+   },
+   "jeans": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.3214254248822674,
+    "source": "male_casualsuit04",
+    "bit": 2
+   },
+   "longsleeve": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.2588972795124868,
+    "source": "male_casualsuit02",
+    "bit": 3
+   },
+   "shirt": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.15298049693261281,
+    "source": "male_casualsuit03",
+    "bit": 4
+   },
+   "jacket": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.1884049581063544,
+    "source": "male_casualsuit05",
+    "bit": 1
+   },
+   "suit_jacket": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.20629138409941344,
+    "source": "male_elegantsuit01",
+    "bit": 8
+   },
+   "suit_pants": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.14274883545223724,
+    "source": "male_elegantsuit01",
+    "bit": 9
+   },
+   "sneakers": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.42783076100958556,
+    "source": "shoes06",
+    "bit": 6
+   },
+   "sneakers_white": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.3700281198421922,
+    "source": "shoes05",
+    "bit": 7
+   },
+   "boots": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.4127006297258186,
+    "source": "shoes01",
+    "bit": 0
+   },
+   "shoes_black": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.2632741014767875,
+    "source": "shoes04",
+    "bit": 5
+   },
+   "hair_messy": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.24664454393981208
+   },
+   "hair_side_part": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.10759305275956514
+   },
+   "hair_buzz": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.13995462911921902
+   },
+   "hair_afro": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.056106878547809866
+   },
+   "eyelashes": {
+    "slot": 7,
+    "kind": "face_hair",
+    "lum": 0.2
+   },
+   "face_hair": {
+    "slot": 7,
+    "kind": "face_hair",
+    "lum": 0.2
+   },
+   "cap": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "beanie": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "helmet": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "police_hat": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "mask": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "sunglasses": {
+    "slot": 6,
+    "kind": "fixed",
+    "lum": 0.05
+   },
+   "vest": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "duty_belt": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   }
+  },
+  "skins": {
+   "young_caucasian_male": [
+    0.0,
+    0.0
+   ],
+   "young_african_male": [
+    0.25,
+    0.0
+   ],
+   "young_asian_male": [
+    0.5,
+    0.0
+   ],
+   "hero_m": [
+    0.0,
+    0.8
+   ]
+  },
+  "scale": 1.0173,
+  "height": 1.81,
+  "clips": 41
+ },
+ "f": {
+  "parts": {
+   "body": {
+    "slot": 0,
+    "kind": "body"
+   },
+   "eyes": {
+    "slot": 6,
+    "kind": "eyes"
+   },
+   "eyes_alt": {
+    "slot": 6,
+    "kind": "eyes"
+   },
+   "tee": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.2934141130995288,
+    "source": "female_casualsuit01",
+    "bit": 11
+   },
+   "jeans": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.3259332476380481,
+    "source": "female_casualsuit01",
+    "bit": 3
+   },
+   "tee_b": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.30212575193906344,
+    "source": "female_casualsuit02",
+    "bit": 12
+   },
+   "shorts": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.3133946792525208,
+    "source": "female_casualsuit02",
+    "bit": 6
+   },
+   "crop": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.2898293851066398,
+    "source": "female_sportsuit01",
+    "bit": 1
+   },
+   "leggings": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.20303853288310292,
+    "source": "female_sportsuit01",
+    "bit": 4
+   },
+   "tank": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.2794528957250675,
+    "source": "female_sportsuit01",
+    "bit": 10
+   },
+   "blouse": {
+    "slot": 1,
+    "kind": "top",
+    "lum": 0.1489571539153236,
+    "source": "female_elegantsuit01",
+    "bit": 0
+   },
+   "skirt": {
+    "slot": 2,
+    "kind": "bottom",
+    "lum": 0.2017181958542666,
+    "source": "female_elegantsuit01",
+    "bit": 7
+   },
+   "sneakers": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.4255238590158412,
+    "source": "shoes06",
+    "bit": 8
+   },
+   "sneakers_white": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.37634978778863526,
+    "source": "shoes05",
+    "bit": 9
+   },
+   "flats": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.06895126702225887,
+    "source": "shoes03",
+    "bit": 2
+   },
+   "shoes_black": {
+    "slot": 3,
+    "kind": "shoes",
+    "lum": 0.27663917438674035,
+    "source": "shoes04",
+    "bit": 5
+   },
+   "hair_ponytail": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.26087586262505186
+   },
+   "hair_bob": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.6156540211906008
+   },
+   "hair_long": {
+    "slot": 7,
+    "kind": "hair",
+    "lum": 0.1601540617305694
+   },
+   "eyelashes": {
+    "slot": 7,
+    "kind": "face_hair",
+    "lum": 0.2
+   },
+   "face_hair": {
+    "slot": 7,
+    "kind": "face_hair",
+    "lum": 0.2
+   },
+   "cap": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "beanie": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "helmet": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "police_hat": {
+    "slot": 4,
+    "kind": "hat",
+    "lum": 0.8
+   },
+   "mask": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "sunglasses": {
+    "slot": 6,
+    "kind": "fixed",
+    "lum": 0.05
+   },
+   "vest": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   },
+   "duty_belt": {
+    "slot": 5,
+    "kind": "gear",
+    "lum": 0.8
+   }
+  },
+  "skins": {
+   "young_caucasian_female": [
+    0.0,
+    0.0
+   ],
+   "young_african_female": [
+    -0.75,
+    0.2
+   ],
+   "young_asian_female": [
+    -0.5,
+    0.2
+   ],
+   "hero_f": [
+    -0.5,
+    0.8
+   ]
+  },
+  "scale": 0.9199,
+  "height": 1.7,
+  "clips": 41
+ }
+}

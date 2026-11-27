@@ -356,6 +356,16 @@ tt = t(0.6); write('bad', np.sign(np.sin(2 * np.pi * np.where(tt < 0.25, 220, 16
 tt = t(0.35); write('good', np.sin(2 * np.pi * np.where(tt < 0.12, 660, 990) * tt) * 0.35 * np.exp(-tt * 5))
 n = noise(0.12); write('hit', (n - lowpass(n, 0.4)) * env(len(n), 0.001, 0.03) * 1.5)
 tt = t(0.5); write('drill', (np.sign(np.sin(2 * np.pi * 180 * tt)) * 0.3 + noise(0.5) * 0.2) * (0.7 + 0.3 * np.sin(2 * np.pi * 9 * tt)))
+# car horn: two detuned square-ish tones, slight attack
+tt = t(0.55); hn = (np.tanh(3 * np.sin(2 * np.pi * 415 * tt)) + np.tanh(3 * np.sin(2 * np.pi * 349 * tt))) * 0.22
+write('horn', lowpass(hn, 0.35) * np.minimum(1, tt / 0.02) * np.minimum(1, (0.55 - tt) / 0.05))
+# reload: mag out click, mag in clack, slide rack
+rl = np.zeros(int(SR * 1.2))
+for at, f, k in [(0.12, 2600, 60), (0.62, 1700, 45), (0.95, 2200, 55), (1.02, 1500, 40)]:
+    i = int(at * SR); n = noise(0.06); seg = (n - lowpass(n, 0.5)) * np.exp(-t(0.06) * k) * 0.9 + np.sin(2 * np.pi * f * t(0.06)) * np.exp(-t(0.06) * k * 1.4) * 0.3
+    rl[i:i + len(seg)] += seg
+write('reload', rl)
+tt = t(0.05); write('dry', np.sign(np.sin(2 * np.pi * 2400 * tt)) * 0.12 * np.exp(-tt * 120))
 # loops (seamless lengths)
 tt = t(1.0); f = np.where((tt * 2.0) % 1 < 0.5, 950, 760); ph = np.cumsum(2 * np.pi * f / SR)
 write('alarm_loop', np.sign(np.sin(ph)) * 0.25)

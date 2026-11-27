@@ -23,6 +23,8 @@ var start_btn: Button
 var quality_btn: Button
 var fps_btn: Button
 var autores_btn: Button
+var steer_btn: Button
+var lfire_btn: Button
 var fps_label: Label
 const MAP_PX := KeysGen.MAP_PX
 const MX0 := KeysGen.X0
@@ -280,7 +282,16 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_E: do_action(0)
 			KEY_Q: do_action(1)
 			KEY_Z: do_action(2)
-			KEY_R: P.toggle_weapon()
+			KEY_R:
+				if P.weapon and P.mag < P.MAG:
+					P.reload()
+				else:
+					P.toggle_weapon()
+			KEY_X: P.toggle_weapon()
+			KEY_C: P.toggle_crouch()
+			KEY_SPACE:
+				if not P.in_car:
+					P.do_jump()
 			KEY_M: P.toggle_mask()
 			KEY_V, KEY_TAB: Game.focus = not Game.focus
 			KEY_T: open_screen("map")
@@ -373,14 +384,14 @@ func _build_screens() -> void:
 - Sell loot at Yasmani's pawn shop in town or to Brian at the boat works (F), then deposit cash at an ATM.""", 16, Color(1, 1, 1, 0.85))
 	tips.custom_minimum_size = Vector2(760, 0)
 	sc.add_child(tips)
-	var keys := _label("Keyboard: WASD move/drive, mouse look, E/Q/Z actions, R gun, F or click fire, M mask, V focus, G shout, B give up, H hide in car, T map, Space handbrake, Shift run.", 13, Color(1, 1, 1, 0.5))
+	var keys := _label("Keyboard: WASD move/drive, mouse look, click fire, hold right mouse to aim, R draw/reload, X holster, C crouch, Space jump (handbrake in a car), N horn, Shift sprint, E/Q/Z actions, M mask, V focus, G shout, B give up, H hide in car, T map.", 13, Color(1, 1, 1, 0.5))
 	keys.visible = not show_touch
 	v.add_child(keys)
 	start_btn = _button("START", _start_game, true)
 	v.add_child(start_btn)
 	screens.start.visible = true
 	# pause / settings
-	v = _panel("pause", 560, 520)
+	v = _panel("pause", 560, 640)
 	v.add_child(_label("PAUSED", 36, Color("e8b931"), false))
 	v.add_child(_button("Resume", close_screens, true))
 	v.add_child(_button("Map", func(): open_screen("map")))
@@ -396,6 +407,16 @@ func _build_screens() -> void:
 		Settings.toggle_auto_res()
 		_refresh_settings())
 	v.add_child(autores_btn)
+	steer_btn = _button("Steering: ", func():
+		Settings.steer_mode = "stick" if Settings.steer_mode == "buttons" else "buttons"
+		Settings.save()
+		_refresh_settings())
+	v.add_child(steer_btn)
+	lfire_btn = _button("Left fire button: ", func():
+		Settings.left_fire = not Settings.left_fire
+		Settings.save()
+		_refresh_settings())
+	v.add_child(lfire_btn)
 	v.add_child(_button("Show FPS", func():
 		Settings.show_fps = not Settings.show_fps
 		Settings.save()
@@ -450,6 +471,8 @@ func _refresh_settings() -> void:
 	quality_btn.text = "Graphics: " + Settings.quality.capitalize()
 	fps_btn.text = "Frame rate: %d fps%s" % [Settings.fps_cap, " (battery saver)" if Settings.fps_cap == 30 else ""]
 	autores_btn.text = "Auto resolution: " + ("On" if Settings.auto_res else "Off")
+	steer_btn.text = "Steering: " + ("Left / right buttons" if Settings.steer_mode == "buttons" else "Joystick")
+	lfire_btn.text = "Left fire button: " + ("On" if Settings.left_fire else "Off")
 
 func _start_game() -> void:
 	screens.start.visible = false

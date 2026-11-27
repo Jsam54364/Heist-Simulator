@@ -30,9 +30,9 @@ func _make_car(p: Vector3, yaw: float, ai: Dictionary) -> Vehicle:
 	var car: Vehicle = Game.main.spawn_car("civ", p, yaw)
 	car.ai = ai
 	var d: Character = Game.main.spawn_char("driver", p)
+	car.npc_driver = d
 	d.in_car = car
 	d.set_hidden(true)
-	car.npc_driver = d
 	return car
 
 func _focus() -> Vector3:

@@ -39,8 +39,13 @@ func _run() -> void:
 	Settings.auto_res = false
 	Settings.apply()
 	main.hud._start_game()
+	if "touch" in OS.get_cmdline_user_args():
+		main.hud.show_touch = true
 	var P: Player = Game.player
+	var only: Array = Array(OS.get_cmdline_user_args()).filter(func(a): return a.begins_with("only="))
 	for v in views(main.world_gen):
+		if not only.is_empty() and not (v[0] in only[0].substr(5).split(",")):
+			continue
 		main.streamer.prime(v[1])
 		if v[0] == "drive":
 			var car: Vehicle = Game.player_car

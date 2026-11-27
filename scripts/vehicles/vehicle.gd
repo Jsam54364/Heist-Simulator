@@ -48,6 +48,13 @@ var npc_driver = null      # Character driving
 var ai := {}
 var trunk: Array = []
 var personal := false
+var occupants := [null, null, null, null]   # seated Characters: 0 driver, 1 passenger, 2-3 rear
+## hip joint of each seat in car space (people are posed seated with their hips here)
+var seats := [Vector3(0.36, 0.52, -0.30), Vector3(-0.36, 0.52, -0.30), Vector3(0.36, 0.55, -1.15), Vector3(-0.36, 0.55, -1.15)]
+
+func seat_transform(i: int) -> Transform3D:
+	var s: Vector3 = seats[clampi(i, 0, seats.size() - 1)]
+	return Transform3D(Basis.IDENTITY, s - Vector3(0, 0.96, 0))
 var siren := false
 var parked := false
 var removed := false

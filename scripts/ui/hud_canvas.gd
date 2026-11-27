@@ -51,49 +51,87 @@ func damage_flash() -> void:
 	flash_t = 0.25
 
 # ---------- layout ----------
-func btn(id: String, center: Vector2, r: float, label: String, hold := false, active := false, color := Color(1, 1, 1)) -> void:
-	buttons.append({"id": id, "c": center, "r": r, "label": label, "hold": hold, "active": active, "color": color, "pill": false})
+## Buttons are rebuilt every frame from game state (COD Mobile-style clusters):
+## on foot - movement stick left (push past the ring to lock sprint), FIRE / ADS /
+## RELOAD / JUMP / CROUCH on the right, optional left FIRE, utility row above, the weapon
+## card bottom-centre-right; in a vehicle - left/right steering buttons (or the stick),
+## GAS / BRAKE / HANDBRAKE / HORN / EXIT on the right, speed gauge bottom centre.
+func btn(id: String, center: Vector2, r: float, icon: String, label := "", hold := false, active := false, color := Color(1, 1, 1), dim := false) -> void:
+	buttons.append({"id": id, "c": center, "r": r, "icon": icon, "label": label, "hold": hold, "active": active, "color": color, "pill": false, "dim": dim})
 
 func pill(id: String, rect: Rect2, a: Dictionary, key: String, progress := -1.0) -> void:
 	buttons.append({"id": id, "rect": rect, "label": a.label, "key": key, "disabled": a.get("disabled", false), "progress": progress, "pill": true, "hold": false})
 
+var card_rect := Rect2()
+
 func layout() -> void:
 	buttons.clear()
+	card_rect = Rect2()
 	var P = Game.player
 	if P == null or not Game.running or Game.paused or P.dead:
 		return
 	var S := size
 	var W := S.x
 	var H := S.y
-	btn("pause", Vector2(W * 0.5, 30), 22, "II")
+	btn("pause", Vector2(W * 0.5, 30), 22, "pause")
+	if not hud.show_touch:
+		_layout_pills(P, W, H)
+		return
 	if P.in_car:
-		btn("gas", Vector2(W - 118, H - 128), 64, "GAS", true, P.inp.gas, Color("7cf27c"))
-		btn("brake", Vector2(W - 268, H - 84), 52, "BRAKE", true, P.inp.brake, Color("ff6b6b"))
-		btn("handbrake", Vector2(W - 150, H - 286), 46, "DRIFT", true, P.inp.handbrake, Color("ffd23f"))
-		if absf(P.in_car.speed()) < 1.5 or P.in_car.crouched:
-			btn("hide", Vector2(W - 300, H - 236), 36, "HIDE", false, P.in_car.crouched, Color("7cf27c"))
+		var car = P.in_car
+		if Settings.steer_mode == "buttons":
+			btn("steer_l", Vector2(118, H - 132), 66, "left", "", true, P.inp.get("steer_l", false))
+			btn("steer_r", Vector2(286, H - 132), 66, "right", "", true, P.inp.get("steer_r", false))
+		btn("gas", Vector2(W - 132, H - 148), 72, "gas", "GAS", true, P.inp.gas, Color("7cf27c"))
+		btn("brake", Vector2(W - 300, H - 104), 56, "brake", "BRAKE", true, P.inp.brake, Color("ff6b6b"))
+		btn("handbrake", Vector2(W - 290, H - 262), 46, "handbrake", "DRIFT", true, P.inp.handbrake, Color("ffd23f"))
+		btn("horn", Vector2(W - 128, H - 312), 36, "horn", "", true, P.inp.horn, Color("ffffff"))
+		btn("exit", Vector2(W - 60, H - 400), 32, "exit", "", false, false, Color("ffffff"))
+		if absf(car.speed()) < 1.5 or car.crouched:
+			btn("hide", Vector2(W - 200, H - 400), 32, "duck", "", false, car.crouched, Color("7cf27c"))
 	else:
-		if P.weapon:
-			btn("fire", Vector2(W - 115, H - 200), 58, "FIRE", true, P.inp.fire, Color("ff5c5c"))
+		var armed: bool = P.weapon
+		if armed:
+			btn("fire", Vector2(W - 182, H - 168), 62, "fire", "", true, P.inp.fire, Color("ff5c5c"))
+			btn("ads", Vector2(W - 168, H - 326), 38, "ads", "", false, P.ads, Color("ffcf5a"))
+			btn("reload", Vector2(W - 310, H - 252), 33, "reload", "", false, P.reload_t > 0.0, Color("7cd3ff"), P.mag >= P.MAG)
+			if Settings.left_fire:
+				btn("fire_l", Vector2(112, H - 372), 42, "fire", "", true, P.inp.fire, Color("ff5c5c"))
 		else:
-			btn("run", Vector2(W - 115, H - 200), 48, "RUN", true, P.inp.sprint)
-		btn("gun", Vector2(W - 232, H - 92), 42, "GUN", false, P.weapon, Color("ffcf5a"))
-		btn("mask", Vector2(W - 335, H - 62), 36, "MASK", false, P.masked, Color("b48cff"))
-		btn("focus", Vector2(W - 225, H - 226), 34, "FOCUS", false, Game.focus, Color("2de2e6"))
+			btn("draw", Vector2(W - 182, H - 168), 62, "pistol", "DRAW", false, false, Color("ffcf5a"))
+		btn("jump", Vector2(W - 64, H - 238), 36, "jump", "", false, P.airborne())
+		btn("crouch", Vector2(W - 70, H - 92), 38, "crouch", "", false, P.crouching, Color("7cf27c"))
+		# utility row
+		var ux := W - 62.0
+		var uy := H - 430.0
+		btn("mask", Vector2(ux, uy), 28, "mask", "", false, P.masked, Color("b48cff"))
+		ux -= 72
+		btn("focus", Vector2(ux, uy), 28, "focus", "", false, Game.focus, Color("2de2e6"))
+		ux -= 72
 		if _people_near(P):
-			btn("shout", Vector2(W - 330, H - 168), 36, "SHOUT", false, false, Color("ff9a3c"))
+			btn("shout", Vector2(ux, uy), 28, "shout", "", false, false, Color("ff9a3c"))
+			ux -= 72
 		if Game.police.can_surrender() or P.surrendering:
-			btn("surrender", Vector2(W - 112, H - 330), 40, "GIVE UP", false, P.surrendering, Color("e6e6e6"))
-	# action pills
+			btn("surrender", Vector2(ux, uy), 28, "surrender", "", false, P.surrendering, Color("e6e6e6"))
+		# weapon card (tap: draw / holster)
+		card_rect = Rect2(W - 520, H - 80, 196, 60)
+	_layout_pills(P, W, H)
+
+func _layout_pills(P, W: float, H: float) -> void:
 	var acts = hud.actions
-	var x0 := W - 480.0
-	var y0 := H - (430.0 if P.in_car else 420.0)
+	var x0 := W * 0.5 - 90.0
+	var y0 := H - 212.0
+	if not hud.show_touch:
+		x0 = W - 480.0
+		y0 = H - 260.0
 	if P.action != null:
-		pill("act0", Rect2(x0, y0, 340, 52), P.action, "E", P.action.t / P.action.dur)
+		pill("act0", Rect2(x0, y0, 330, 52), P.action, "E", P.action.t / P.action.dur)
 	elif acts != null:
 		var keys := ["E", "Q", "Z"]
 		for i in mini(3, acts.actions.size()):
-			pill("act%d" % i, Rect2(x0, y0 + i * 60, 340, 52), acts.actions[i], keys[i])
+			if hud.show_touch and P.in_car and acts.actions[i].label == "Exit vehicle":
+				continue
+			pill("act%d" % i, Rect2(x0, y0 - i * 60, 330, 52), acts.actions[i], keys[i])
 
 func _people_near(P) -> bool:
 	for c in Game.chars:
@@ -108,9 +146,29 @@ func hit_button(p: Vector2):
 		if b.pill:
 			if b.rect.grow(6).has_point(p):
 				return b
-		elif p.distance_to(b.c) < b.r + 14:
+		elif p.distance_to(b.c) < b.r + 12:
 			return b
+	if card_rect.size.x > 0.0 and card_rect.grow(6).has_point(p):
+		return {"id": "card", "pill": false}
 	return null
+
+# ---------- feedback ----------
+var hit_t := 0.0
+var hit_kill := false
+var dmg_dirs: Array = []     # [{"x", "z", "t"}] attacker positions, fade out
+
+func hit_marker(kill: bool) -> void:
+	hit_t = 0.28
+	hit_kill = kill
+
+func damage_from(p: Vector3) -> void:
+	for d in dmg_dirs:
+		if Vector2(d.x - p.x, d.z - p.z).length() < 2.0:
+			d.t = 1.4
+			return
+	dmg_dirs.append({"x": p.x, "z": p.z, "t": 1.4})
+	if dmg_dirs.size() > 5:
+		dmg_dirs.pop_front()
 
 # ---------- input ----------
 func _input(event: InputEvent) -> void:
@@ -133,7 +191,8 @@ func _input(event: InputEvent) -> void:
 		if t.kind == "joy":
 			joy.pos = p
 			_update_joy()
-		elif t.kind == "look":
+		elif t.kind == "look" or (t.kind == "btn" and t.id in ["fire", "fire_l"]):
+			# COD-style: dragging off the fire button keeps firing and aims
 			var rel: Vector2 = event.relative
 			Game.main.camera.look(rel.x * 1.15 * look_sens, rel.y * 1.15 * look_sens)
 		get_viewport().set_input_as_handled()
@@ -148,7 +207,9 @@ func _touch_down(index: int, p: Vector2) -> void:
 		touches[index] = {"kind": "none"}
 		map_pressed.emit()
 		return
-	if p.x < size.x * 0.42 and p.y > 110:
+	var P = Game.player
+	var stick_ok: bool = not (P.in_car and Settings.steer_mode == "buttons")
+	if stick_ok and p.x < size.x * 0.42 and p.y > 110:
 		touches[index] = {"kind": "joy"}
 		joy = {"active": true, "origin": p, "pos": p, "index": index}
 		_update_joy()
@@ -166,18 +227,28 @@ func _touch_up(index: int) -> void:
 		joy.active = false
 		Game.player.inp.jx = 0.0
 		Game.player.inp.jy = 0.0
+		Game.player.sprint_lock = false
+
+const JOY_R := 70.0
 
 func _update_joy() -> void:
 	var d: Vector2 = joy.pos - joy.origin
-	var R := 70.0
-	if d.length() > R * 1.6:
-		joy.origin = joy.pos - d.normalized() * R * 1.6
+	var P = Game.player
+	# pushing well past the ring, upward, locks sprint (released by letting go)
+	if not P.in_car:
+		if d.y < -JOY_R * 1.45 and absf(d.x) < JOY_R * 0.9:
+			P.sprint_lock = true
+		elif d.y > -JOY_R * 0.4:
+			P.sprint_lock = false
+	var lim := JOY_R * (2.1 if P.sprint_lock else 1.6)
+	if d.length() > lim:
+		joy.origin = joy.pos - d.normalized() * lim
 		d = joy.pos - joy.origin
-	var v := d / R
+	var v := d / JOY_R
 	if v.length() > 1.0:
 		v = v.normalized()
-	Game.player.inp.jx = v.x
-	Game.player.inp.jy = -v.y
+	P.inp.jx = v.x
+	P.inp.jy = -v.y
 
 func _press(id: String, down: bool) -> void:
 	var P = Game.player
@@ -185,12 +256,22 @@ func _press(id: String, down: bool) -> void:
 		"gas": P.inp.gas = down
 		"brake": P.inp.brake = down
 		"handbrake": P.inp.handbrake = down
-		"fire": P.inp.fire = down
-		"run": P.inp.sprint = down
+		"fire", "fire_l": P.inp.fire = down
+		"steer_l": P.inp.steer_l = down
+		"steer_r": P.inp.steer_r = down
+		"horn":
+			P.inp.horn = down
+			if down:
+				P.honk()
 	if not down:
 		return
 	match id:
-		"gun": P.toggle_weapon()
+		"draw", "card": P.toggle_weapon()
+		"ads": P.toggle_ads()
+		"reload": P.reload()
+		"jump": P.do_jump()
+		"crouch": P.toggle_crouch()
+		"exit": P.exit_car()
 		"mask": P.toggle_mask()
 		"focus": Game.focus = not Game.focus
 		"shout": Game.main.npc_ai.shout()
@@ -258,6 +339,11 @@ func _process(dt: float) -> void:
 	while not toasts.is_empty() and toasts[0].t > 5.0:
 		toasts.pop_front()
 	flash_t = maxf(0.0, flash_t - dt)
+	hit_t = maxf(0.0, hit_t - dt)
+	for i in range(dmg_dirs.size() - 1, -1, -1):
+		dmg_dirs[i].t -= dt
+		if dmg_dirs[i].t <= 0.0:
+			dmg_dirs.remove_at(i)
 	layout()
 	queue_redraw()
 
@@ -368,57 +454,185 @@ func _draw() -> void:
 		draw_rect(Rect2(W * 0.5 - tw / 2, ty + 4, 3, 22), col)
 		text(t.text, Vector2(W * 0.5 - tw / 2 + 14, ty + 21), 16, Color(1, 1, 1, a), HORIZONTAL_ALIGNMENT_LEFT, tw - 20, font, 0)
 		ty += 36
-	# reticle + target
-	if P.weapon and P.in_car == null and not P.dead:
-		var c := S * 0.5
-		var hot = P.aim_target != null
-		var rc := Color("ff4d4d") if hot else Color(1, 1, 1, 0.9)
-		var g := 5.0 if hot else 8.0
-		for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
-			draw_line(c + d * g, c + d * (g + 9), Color(0, 0, 0, 0.6), 4)
-			draw_line(c + d * g, c + d * (g + 9), rc, 2)
-		draw_circle(c, 2, rc)
-		if hot:
-			centered(hud.target_text, c + Vector2(0, 46), 17, Color.WHITE, bold, 5)
-	# speedometer
+	var on_foot: bool = P.in_car == null and not P.dead
+	if on_foot:
+		_draw_crosshair(P, S)
+	_draw_damage_dirs(S)
 	if P.in_car:
-		var car = P.in_car
-		var sc := Vector2(W * 0.5, H - 70)
-		sb_panel.bg_color = Color(0.03, 0.04, 0.05, 0.62)
-		draw_style_box(sb_panel, Rect2(sc.x - 90, sc.y - 44, 180, 80))
-		centered(str(roundi(absf(car.speed()) * 2.237)), sc + Vector2(-14, -6), 38, Color.WHITE, bold, 0)
-		text("MPH", sc + Vector2(30, -12), 12, Color(1, 1, 1, 0.6), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
-		text("R" if car.gear == 0 else str(car.gear), sc + Vector2(30, 8), 18, Color("ffcf5a"), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
-		draw_rect(Rect2(sc.x - 74, sc.y + 22, 148, 5), Color(1, 1, 1, 0.15))
-		var rp: float = 0.15 + car.rpm * 0.85
-		draw_rect(Rect2(sc.x - 74, sc.y + 22, 148 * rp, 5), Color("ff6b6b") if rp > 0.9 else Color("ffcf5a"))
+		_draw_gauge(P.in_car, Vector2(W * 0.5, H - 64))
+	elif hud.show_touch and card_rect.size.x > 0.0:
+		_draw_weapon_card(P)
 	# touch controls
 	if hud.show_touch:
 		if joy.active:
-			draw_circle(joy.origin, 74, Color(0, 0, 0, 0.22))
-			draw_arc(joy.origin, 74, 0, TAU, 48, Color(1, 1, 1, 0.35), 2, true)
-			var kd: Vector2 = (joy.pos - joy.origin).limit_length(70)
+			draw_circle(joy.origin, JOY_R + 4, Color(0, 0, 0, 0.22))
+			draw_arc(joy.origin, JOY_R + 4, 0, TAU, 48, Color(1, 1, 1, 0.35), 2, true)
+			var kd: Vector2 = (joy.pos - joy.origin).limit_length(JOY_R)
 			draw_circle(joy.origin + kd, 32, Color(1, 1, 1, 0.55))
-		else:
-			var hc := Vector2(150, H - 150)
-			draw_arc(hc, 64, 0, TAU, 48, Color(1, 1, 1, 0.16), 2, true)
+			if P.in_car == null:
+				_draw_sprint_lock(P, joy.origin + Vector2(0, -JOY_R * 1.95))
+		elif not (P.in_car and Settings.steer_mode == "buttons"):
+			var hc := Vector2(170, H - 170)
+			draw_arc(hc, 66, 0, TAU, 48, Color(1, 1, 1, 0.16), 2, true)
 			draw_circle(hc, 26, Color(1, 1, 1, 0.12))
 	for b in buttons:
 		if b.pill:
-			var r: Rect2 = b.rect
-			draw_style_box(sb_pill_dis if b.disabled else sb_pill, r)
-			if b.progress >= 0.0:
-				draw_rect(Rect2(r.position.x + 6, r.end.y - 7, (r.size.x - 12) * clampf(b.progress, 0, 1), 4), Color("7cf27c"))
-			if not b.disabled:
-				draw_circle(Vector2(r.position.x + 26, r.position.y + r.size.y / 2), 15, Color(1, 1, 1, 0.92))
-				centered(b.key if not hud.show_touch else "", Vector2(r.position.x + 26, r.position.y + r.size.y / 2), 15, Color(0.05, 0.05, 0.05), bold, 0)
-			text(b.label, Vector2(r.position.x + (50 if not b.disabled else 16), r.position.y + r.size.y / 2 + 6), 16, Color(1, 1, 1, 0.5 if b.disabled else 1.0), HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 60, bold, 0)
+			_draw_pill(b)
 		elif hud.show_touch or b.id == "pause":
-			var col: Color = b.color
-			var fill := Color(col.r, col.g, col.b, 0.42) if b.active else Color(0.03, 0.04, 0.05, 0.42)
-			draw_circle(b.c, b.r, fill)
-			draw_arc(b.c, b.r, 0, TAU, 48, Color(col.r, col.g, col.b, 0.85 if b.active else 0.5), 2.5, true)
-			centered(b.label, b.c, clampi(int(b.r * 0.38), 11, 20), Color.WHITE, bold, 3)
+			_draw_button(b, P)
+
+func _draw_pill(b: Dictionary) -> void:
+	var r: Rect2 = b.rect
+	draw_style_box(sb_pill_dis if b.disabled else sb_pill, r)
+	if b.progress >= 0.0:
+		draw_rect(Rect2(r.position.x + 6, r.end.y - 7, (r.size.x - 12) * clampf(b.progress, 0, 1), 4), Color("7cf27c"))
+	var cy := r.position.y + r.size.y / 2
+	if not b.disabled:
+		if hud.show_touch:
+			var ic := Icons.tex("hand", _px(26))
+			draw_circle(Vector2(r.position.x + 26, cy), 17, Color(1, 1, 1, 0.92))
+			if ic:
+				draw_texture_rect(ic, Rect2(r.position.x + 15, cy - 11, 22, 22), false, Color(0.06, 0.06, 0.07))
+		else:
+			draw_circle(Vector2(r.position.x + 26, cy), 15, Color(1, 1, 1, 0.92))
+			centered(b.key, Vector2(r.position.x + 26, cy), 15, Color(0.05, 0.05, 0.05), bold, 0)
+	text(b.label, Vector2(r.position.x + (52 if not b.disabled else 16), cy + 6), 16, Color(1, 1, 1, 0.5 if b.disabled else 1.0), HORIZONTAL_ALIGNMENT_LEFT, r.size.x - 60, bold, 0)
+
+## pixel density multiplier (canvas units -> screen pixels) so icons rasterise crisply
+func _px(units: float) -> int:
+	return int(units * maxf(1.0, get_viewport().get_final_transform().y.y) + 0.5)
+
+func _draw_button(b: Dictionary, P) -> void:
+	var col: Color = b.color
+	var c: Vector2 = b.c
+	var r: float = b.r
+	var on: bool = b.active
+	var dim: bool = b.get("dim", false)
+	# COD Mobile look: dark translucent disc, thin ring, white glyph; active = tinted
+	draw_circle(c, r, Color(col.r * 0.35, col.g * 0.35, col.b * 0.35, 0.55) if on else Color(0.02, 0.03, 0.04, 0.38))
+	draw_arc(c, r, 0, TAU, 56, Color(col.r, col.g, col.b, 0.95) if on else Color(1, 1, 1, 0.38 if not dim else 0.18), 3.0 if on else 2.0, true)
+	var ic := Icons.tex(b.icon, _px(r * 1.15))
+	var a := 0.45 if dim else 0.95
+	if ic:
+		var s := r * (1.0 if b.label == "" else 0.85)
+		var off := Vector2(0, -r * 0.12) if b.label != "" else Vector2.ZERO
+		var tint := Color(col.r, col.g, col.b, a) if on else Color(1, 1, 1, a)
+		draw_texture_rect(ic, Rect2(c - Vector2(s, s) * 0.5 + off, Vector2(s, s)), false, tint)
+	else:
+		centered(b.label, c, clampi(int(r * 0.38), 11, 20), Color.WHITE, bold, 3)
+	if b.label != "" and ic:
+		centered(b.label, c + Vector2(0, r * 0.56), clampi(int(r * 0.24), 10, 15), Color(1, 1, 1, 0.85), bold, 2)
+	# reload progress ring / ammo pip on fire button
+	if b.id == "reload" and P.reload_t > 0.0:
+		draw_arc(c, r + 5, -PI / 2, -PI / 2 + TAU * (1.0 - P.reload_t / 1.55), 40, Color("7cd3ff"), 4.0, true)
+	if b.id in ["fire", "fire_l"] and P.weapon:
+		var low: bool = P.mag <= 3
+		var txt := str(P.mag)
+		var tc := Color("ff6b6b") if low else Color(1, 1, 1, 0.9)
+		centered(txt, c + Vector2(r * 0.72, -r * 0.72), 15, tc, bold, 4)
+
+func _draw_sprint_lock(P, c: Vector2) -> void:
+	var on: bool = P.sprint_lock
+	var col := Color("ffcf5a")
+	draw_circle(c, 26, Color(col.r * 0.3, col.g * 0.3, col.b * 0.3, 0.55) if on else Color(0.02, 0.03, 0.04, 0.3))
+	draw_arc(c, 26, 0, TAU, 40, col if on else Color(1, 1, 1, 0.3), 2.0, true)
+	var ic := Icons.tex("sprint", _px(30))
+	if ic:
+		draw_texture_rect(ic, Rect2(c - Vector2(15, 15), Vector2(30, 30)), false, col if on else Color(1, 1, 1, 0.55))
+
+func _draw_crosshair(P, S: Vector2) -> void:
+	var c := S * 0.5
+	if P.weapon:
+		var cam: Camera3D = Game.main.camera
+		var hot = P.aim_target != null
+		var rc := Color("ff4d4d") if hot else Color(1, 1, 1, 0.92)
+		# gap = projected spread cone, so the crosshair is honest about accuracy
+		var gap := tan(deg_to_rad(P.spread())) / tan(deg_to_rad(cam.fov * 0.5)) * S.y * 0.5
+		gap = clampf(gap, 4.0, 90.0)
+		var ln := 10.0 if P.ads else 12.0
+		if P.sprinting:
+			rc.a = 0.25
+		for d in [Vector2(1, 0), Vector2(-1, 0), Vector2(0, 1), Vector2(0, -1)]:
+			draw_line(c + d * gap, c + d * (gap + ln), Color(0, 0, 0, 0.55 * rc.a), 4.5)
+			draw_line(c + d * gap, c + d * (gap + ln), rc, 2.2)
+		draw_circle(c, 2.2 if P.ads else 1.8, rc)
+		if hot:
+			centered(hud.target_text, c + Vector2(0, gap + 40), 17, Color.WHITE, bold, 5)
+		if P.reload_t > 0.0:
+			draw_arc(c, gap + 22, -PI / 2, -PI / 2 + TAU * (1.0 - P.reload_t / 1.55), 40, Color(1, 1, 1, 0.8), 3.0, true)
+			centered("RELOADING", c + Vector2(0, gap + 40 + (24 if hot else 0)), 13, Color("7cd3ff"), bold, 4)
+		elif P.mag == 0:
+			centered("RELOAD", c + Vector2(0, gap + 40), 15, Color("ff6b6b") if int(Game.t * 4.0) % 2 == 0 else Color.WHITE, bold, 4)
+		elif P.mag <= 3:
+			centered("LOW AMMO", c + Vector2(0, gap + 40 + (24 if hot else 0)), 12, Color("ffcf5a"), bold, 4)
+	else:
+		draw_circle(c, 2.0, Color(1, 1, 1, 0.55))
+	# hit marker: four diagonal ticks (red when the target went down)
+	if hit_t > 0.0:
+		var hc := Color("ff3b3b") if hit_kill else Color.WHITE
+		hc.a = clampf(hit_t / 0.15, 0.0, 1.0)
+		var k := 1.0 + (0.28 - hit_t) * 1.2
+		for d in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+			var dn: Vector2 = d.normalized()
+			draw_line(c + dn * 7 * k, c + dn * 16 * k, Color(0, 0, 0, hc.a * 0.6), 4.5)
+			draw_line(c + dn * 7 * k, c + dn * 16 * k, hc, 2.4)
+
+func _draw_damage_dirs(S: Vector2) -> void:
+	if dmg_dirs.is_empty():
+		return
+	var P = Game.player
+	var cam = Game.main.camera
+	var pp: Vector3 = P.in_car.global_position if P.in_car else P.global_position
+	var c := S * 0.5
+	for d in dmg_dirs:
+		var ang: float = atan2(d.x - pp.x, d.z - pp.z)
+		# screen angle: 0 = up (in front of the camera), clockwise to the right
+		var rel: float = -U.ang_diff(cam.yaw, ang)
+		var a := clampf(d.t / 0.6, 0.0, 1.0)
+		var sa := rel - PI / 2
+		draw_arc(c, 150, sa - 0.32, sa + 0.32, 24, Color(0.9, 0.08, 0.06, 0.75 * a), 10.0, true)
+		draw_arc(c, 162, sa - 0.18, sa + 0.18, 16, Color(0.9, 0.08, 0.06, 0.45 * a), 5.0, true)
+
+func _draw_weapon_card(P) -> void:
+	var r := card_rect
+	var armed: bool = P.weapon
+	sb_panel.bg_color = Color(0.02, 0.03, 0.04, 0.55)
+	draw_style_box(sb_panel, r)
+	draw_rect(Rect2(r.position.x, r.position.y + 8, 3, r.size.y - 16), Color("ffcf5a") if armed else Color(1, 1, 1, 0.35))
+	var ic := Icons.tex("pistol" if armed else "holster", _px(44))
+	if ic:
+		draw_texture_rect(ic, Rect2(r.position.x + 12, r.position.y + 8, 44, 44), false, Color(1, 1, 1, 0.95 if armed else 0.5))
+	if armed:
+		var mc := Color("ff6b6b") if P.mag <= 3 else Color.WHITE
+		text(str(P.mag), Vector2(r.position.x + 66, r.position.y + 40), 28, mc, HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
+		var mw := bold.get_string_size(str(P.mag), HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+		text("/ " + str(P.MAG), Vector2(r.position.x + 72 + mw, r.position.y + 40), 15, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
+		text("PISTOL" + ("  - SILENCED" if Game.tools.suppressor else ""), Vector2(r.position.x + 66, r.position.y + 54), 10, Color(1, 1, 1, 0.55), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
+	else:
+		text("HOLSTERED", Vector2(r.position.x + 66, r.position.y + 30), 14, Color(1, 1, 1, 0.75), HORIZONTAL_ALIGNMENT_LEFT, -1, bold, 0)
+		text("tap to draw", Vector2(r.position.x + 66, r.position.y + 47), 11, Color(1, 1, 1, 0.45), HORIZONTAL_ALIGNMENT_LEFT, -1, font, 0)
+
+## arc speedometer: speed fill + tick ring, rpm inner arc, gear letter
+func _draw_gauge(car, c: Vector2) -> void:
+	var mph := absf(car.speed()) * 2.237
+	var R := 58.0
+	var a0 := PI * 0.8
+	var a1 := PI * 2.2
+	draw_circle(c, R + 10, Color(0.02, 0.03, 0.04, 0.55))
+	draw_arc(c, R, a0, a1, 48, Color(1, 1, 1, 0.14), 7.0, true)
+	var f := clampf(mph / 140.0, 0.0, 1.0)
+	var sc := Color("7cf27c").lerp(Color("ff5c5c"), clampf((f - 0.55) / 0.45, 0.0, 1.0))
+	if f > 0.003:
+		draw_arc(c, R, a0, lerpf(a0, a1, f), 48, sc, 7.0, true)
+	for i in 8:
+		var ang := lerpf(a0, a1, i / 7.0)
+		var dv := Vector2(cos(ang), sin(ang))
+		draw_line(c + dv * (R - 12), c + dv * (R - 6), Color(1, 1, 1, 0.5), 2.0)
+	var rp: float = clampf(0.15 + car.rpm * 0.85, 0.0, 1.0)
+	draw_arc(c, R - 18, a0, lerpf(a0, a1, rp), 36, Color("ff6b6b") if rp > 0.9 else Color("ffcf5a"), 3.0, true)
+	centered(str(roundi(mph)), c + Vector2(0, -4), 30, Color.WHITE, bold, 0)
+	centered("MPH", c + Vector2(0, 18), 10, Color(1, 1, 1, 0.6), bold, 0)
+	centered("R" if car.gear == 0 else str(car.gear), c + Vector2(0, 40), 16, Color("ffcf5a"), bold, 0)
 
 func _draw_minimap_overlay() -> void:
 	var P = Game.player

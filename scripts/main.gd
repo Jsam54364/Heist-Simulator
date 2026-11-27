@@ -81,15 +81,7 @@ func _ready() -> void:
 	Game.player = player_ctl
 	Game.chars.append(player_ctl)
 	var partner := spawn_char("partner", SPAWN + Vector3(-1.8, 0, 0.6), {"hp": 999.0, "yaw": PI})
-	var bag := MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.5, 0.35, 0.3)
-	bag.mesh = bm
-	bag.material_override = Mats.solid(Color("1d1f22"), 0.8)
-	bag.position = Vector3(0, 1.15, -0.28)
-	bag.visible = false
-	partner.inner.add_child(bag)
-	partner.bag_mesh = bag
+	partner.bag_mesh = partner.model.add_bag()
 	Game.partner = partner
 	Game.player_car = spawn_car("pickup", world_gen.spawn_car, world_gen.spawn_car_yaw, {"color_idx": 3, "personal": true, "tracker": false})
 	traffic.spawn()
@@ -222,6 +214,8 @@ func damage(c, dmg: float, src = null) -> void:
 			dmg -= a
 		P.hp -= dmg
 		hud.canvas.damage_flash()
+		if src != null and is_instance_valid(src) and src is Node3D:
+			hud.canvas.damage_from(src.global_position)
 		camera.shake = maxf(camera.shake, 0.25)
 		if P.hp <= 0.0:
 			P.hp = 0.0
@@ -351,7 +345,8 @@ func _physics_process(dt: float) -> void:
 		nav.follow(player_ctl.global_position)
 	var t0 := Time.get_ticks_usec()
 	player_ctl.update_player(dt)
-	Game.partner.mask_mesh.visible = player_ctl.masked
+	if Game.partner.model.has_part("mask") != player_ctl.masked:
+		Game.partner.model.set_part("mask", player_ctl.masked)
 	t0 = _prof("player", t0)
 	traffic.update(dt)
 	t0 = _prof("traffic", t0)

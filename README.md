@@ -12,14 +12,17 @@ good-looking game.
 
 ## Controls
 
+Third-person-shooter layout modelled on COD Mobile (on foot) and PUBG/COD vehicle controls.
+
 | Touch | Keyboard / mouse |
 |---|---|
-| Left side: floating joystick (walk / steer) | WASD |
-| Right side: drag to look | Mouse (click to capture, Esc to release) |
-| Action pills (right) | E / Q / Z |
-| GUN · FIRE · MASK · FOCUS · RUN | R · F or click · M · V · Shift |
-| GAS · BRAKE · DRIFT (in a car) | W · S · Space |
-| SHOUT (people nearby) · GIVE UP (cops close) · HIDE (stopped car) | G · B · H |
+| Left: floating joystick - push past the ring to lock sprint | WASD, Shift sprint |
+| Right side: drag to look (also drag off FIRE while shooting) | Mouse (click to capture, Esc to release) |
+| FIRE (right + optional left) · ADS scope · RELOAD · JUMP · CROUCH | Click · hold right mouse · R · Space · C |
+| Weapon card (bottom): tap to draw / holster, shows the magazine | R draw, X holster |
+| Utility row: MASK · FOCUS · SHOUT · GIVE UP | M · V · G · B |
+| Interaction pills (centre-right) | E / Q / Z |
+| Car: ◀ ▶ steering buttons (or joystick, see Pause > Steering) · GAS · BRAKE · DRIFT · HORN · EXIT · HIDE | W · S · A/D · Space · N · E · H |
 | Tap the radar for the map, II to pause | T map, Esc pause |
 
 ## What's in the game
@@ -69,7 +72,9 @@ assets/audio/               Generated sound effects + loops
 scripts/autoload/           Game (state), Settings (quality presets), Sfx (audio)
 scripts/world/              Key Lento generator (keys_gen.gd), robbery sites, chunked mesh builder, LOD streamer with
                             threaded chunk generation, local nav window, Route 1 road graph, materials
-scripts/actors/             Character, Player, NPC AI, Police
+scripts/actors/             Character, Player, NPC AI, Police, HumanModel (assembly + AnimationTree), Outfits
+assets/models/              human_m.glb / human_f.glb (rig + parts + 41 clips each), props.glb
+assets/characters/          Character atlases (albedo / normal / hair) + humans.json part catalogue
 scripts/vehicles/           Vehicle physics + procedural car models
 scripts/gameplay/           Robbery systems, traffic, FX, follow camera
 scripts/ui/                 HUD, touch controls, menus, map
@@ -142,6 +147,28 @@ Profiling: `godot --headless --path . --fixed-fps 60 res://scenes/tests/profile.
 time per system; run it with a display (`-- medium`) to also get draw calls / primitives / VRAM.
 After changing textures run `tools/gen_assets.py`, `tools/gen_city_arrays.py`,
 `tools/gen_far_atlas.py`, then `tools/write_imports.py`.
+
+## Characters
+
+People are built from CC0 **MakeHuman** assets (base mesh, morph targets, game-resolution proxy
+bodies, clothes, shoes, hair cards, eyebrows/eyelashes, eyes, photo skins, default rig weights - see
+`assets/characters/CREDITS.md`) by `tools/blender/make_mh_humans.py` (Blender as a Python module):
+
+* bodies are morphed toward the reference sheets in `tools/reference/` (lean athletic male ~1.81 m,
+  athletic female ~1.70 m); the player's and partner's faces are projected from those sheets onto
+  their heads (affine fit to the eyes + mouth), and their whole-body skin is tone-matched to the face
+* our game skeleton (with finger joints) sits on MakeHuman's joint centroids; MakeHuman's painted
+  weights are mapped onto it; the rest pose is normalised so all 41 animation clips (IK-authored in
+  `human_anims.py` / `human_library.py`) bake onto both bodies
+* outfits mix and match: suits are split into tops/bottoms, each with a coverage bit so hidden skin is
+  removed when the game assembles a person into ONE skinned mesh with two draw calls (opaque atlas +
+  alpha-tested hair); garments are tinted per character in `character.gdshader`
+
+```
+bash tools/blender/fetch_makehuman.sh                 # CC0 asset data (once, not in this repo)
+pip install bpy pillow numpy
+python tools/blender/make_mh_humans.py                # -> assets/models/human_*.glb, assets/characters/*
+```
 
 ## Building
 

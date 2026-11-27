@@ -1,7 +1,7 @@
 extends Node
 ## Sound effects: a pool of one-shot players plus named loops (alarm, siren, engine...).
 
-const ONE_SHOTS := ["shot", "shot_suppressed", "npc_shot", "glass", "cash", "boom", "kick", "crash", "click", "beep", "bad", "good", "hit", "drill"]
+const ONE_SHOTS := ["horn", "reload", "dry", "shot", "shot_suppressed", "npc_shot", "glass", "cash", "boom", "kick", "crash", "click", "beep", "bad", "good", "hit", "drill"]
 const LOOPS := ["alarm_loop", "siren_loop", "engine_loop", "screech_loop", "wind_loop"]
 
 var streams := {}

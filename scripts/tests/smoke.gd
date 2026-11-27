@@ -78,8 +78,51 @@ func _run() -> void:
 	var acts = P.current_actions()
 	check(acts != null, "actions near personal car")
 	var car: Vehicle = Game.player_car
+	# --- TPS on-foot mechanics: animation tree, ADS, spread, recoil, reload, crouch, jump ---
+	check(P.model != null and P.model.tree.get("parameters/mode/current_state") == "loco", "player model animates (mode %s)" % P.model.tree.get("parameters/mode/current_state"))
+	var hip_sp: float = 0.0
+	P.toggle_weapon()
+	await wait(5)
+	hip_sp = P.spread()
+	P.toggle_ads()
+	await wait(30)
+	check(P.ads and P.spread() < hip_sp and Game.main.camera.fov < 52.0, "ADS tightens spread (%.1f -> %.1f deg) and zooms (fov %.0f)" % [hip_sp, P.spread(), Game.main.camera.fov])
+	var pitch0: float = Game.main.camera.pitch
+	var shots := 0
+	for i in 14:
+		P.shoot_cd = 0.0
+		P.fire()
+		shots += 1
+		await wait(2)
+	check(P.mag == 0 or P.reload_t > 0.0, "magazine empties (%d left) -> reload" % P.mag)
+	check(Game.main.camera.pitch < pitch0, "recoil kicks the view up (%.3f -> %.3f)" % [pitch0, Game.main.camera.pitch])
+	P.reload()
+	await wait(110)
+	check(P.mag == P.MAG and P.reload_t <= 0.0, "reloaded (%d)" % P.mag)
+	check(P.gun.visible, "pistol shown in hand")
+	P.toggle_ads()
+	P.toggle_crouch()
+	await wait(20)
+	check(P.model.tree.get("parameters/stance/current_state") == "crouch_aim", "crouch-aim stance (%s)" % P.model.tree.get("parameters/stance/current_state"))
+	P.toggle_crouch()
+	P.toggle_weapon()
+	await wait(10)
+	P.do_jump()
+	var peak := 0.0
+	for i in 70:
+		await wait(1)
+		peak = maxf(peak, P.air_y)
+	check(peak > 0.4 and P.air_y == 0.0, "jump arc (peak %.2f m) and landing" % peak)
 	P.enter_car(car)
 	check(P.in_car == car, "entered car")
+	check(car.occupants[0] == P and P.seat == 0 and P.visible, "player seated as the visible driver")
+	var pt = Game.partner
+	check(pt.in_car != car or (pt.seat >= 1 and pt.visible), "partner rides in a passenger seat (seat %d)" % pt.seat)
+	P.inp.steer_r = true
+	await wait(20)
+	check(car.steer_in > 0.3, "steering buttons ramp the wheel (%.2f)" % car.steer_in)
+	P.inp.steer_r = false
+	P.honk()
 	P.inp.gas = true
 	await wait(180)
 	check(car.speed() > 8.0, "car accelerates (%.1f m/s)" % car.speed())

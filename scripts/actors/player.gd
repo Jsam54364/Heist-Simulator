@@ -14,7 +14,16 @@ var aim_point := Vector3.ZERO
 var bust_t := 0.0
 var surrendering := false
 var armor := 0.0
-var inp := {"jx": 0.0, "jy": 0.0, "sprint": false, "gas": false, "brake": false, "handbrake": false, "fire": false}
+var inp := {"jx": 0.0, "jy": 0.0, "sprint": false, "gas": false, "brake": false, "handbrake": false, "fire": false, "horn": false}
+# third-person shooter state
+const MAG := 12
+var mag := MAG
+var reload_t := 0.0
+var ads := false           # aiming down sights (tighter camera, less spread, slower)
+var bloom := 0.0           # extra spread from sustained fire, degrees
+var sprint_lock := false   # joystick pushed past its ring
+var sprinting := false
+var last_shot := -9.0
 
 const ROLE_NAMES := {"clerk": "clerk", "staff": "clerk", "teller": "teller", "guard": "guard", "cop": "officer", "civilian": "customer",
 	"pedestrian": "bystander", "truckguard": "truck guard", "driver": "driver"}
@@ -25,18 +34,14 @@ static func role_name(c) -> String:
 func _ready() -> void:
 	mem.color = Game.OUTFITS[Game.outfit].color
 	super._ready()
-	bag_mesh = MeshInstance3D.new()
-	var bm := BoxMesh.new()
-	bm.size = Vector3(0.5, 0.35, 0.3)
-	bag_mesh.mesh = bm
-	bag_mesh.material_override = Mats.solid(Color("1d1f22"), 0.8)
-	bag_mesh.position = Vector3(0, 1.15, -0.28)
-	bag_mesh.visible = false
-	inner.add_child(bag_mesh)
+	bag_mesh = model.add_bag()
 
 func set_outfit(i: int) -> void:
 	Game.outfit = i
-	set_outfit_color(Game.OUTFITS[i].color)
+	var o: Dictionary = Game.OUTFITS[i]
+	for p in ["tee", "jacket", "shirt", "longsleeve"]:
+		model.set_part(p, p == o.get("part", "tee"))
+	set_outfit_color(o.color)
 
 func change_outfit(src: String) -> void:
 	if src == "trunk":
@@ -54,7 +59,8 @@ func change_outfit(src: String) -> void:
 
 func toggle_mask() -> void:
 	masked = not masked
-	mask_mesh.visible = masked
+	# the balaclava replaces the hair cards (they would poke through)
+	model.set_part("mask", masked)
 	Sfx.play("click")
 
 ## Give yourself up: holster, hands up, let the cops come to you.
@@ -67,6 +73,8 @@ func give_up() -> void:
 		return
 	surrendering = true
 	weapon = false
+	ads = false
+	crouching = false
 	show_gun = false
 	action = null
 	Game.notify("You put your hands up. Stay still...", "warn")
@@ -87,7 +95,50 @@ func toggle_weapon() -> void:
 		return
 	weapon = not weapon
 	action = null
+	if not weapon:
+		ads = false
 	Sfx.play("click")
+
+func toggle_ads() -> void:
+	if in_car or dead:
+		return
+	if not weapon:
+		toggle_weapon()
+	ads = not ads
+	sprint_lock = false
+
+func toggle_crouch() -> void:
+	if in_car or dead or surrendering:
+		return
+	crouching = not crouching
+	sprint_lock = false
+
+func do_jump() -> void:
+	if in_car or dead or surrendering or action != null:
+		return
+	if crouching:
+		crouching = false
+		return
+	jump()
+
+func reload() -> void:
+	if not weapon or in_car or dead or reload_t > 0.0 or mag >= MAG:
+		return
+	reload_t = 1.55
+	ads = false
+	model.shot("reload")
+	Sfx.play("reload")
+
+## current cone half-angle in degrees (drives both the shot and the HUD crosshair)
+func spread() -> float:
+	var s := 0.55 if ads else 2.4
+	if speed_now > 0.5:
+		s += 0.45 if ads else 1.6
+	if airborne():
+		s += 3.0
+	if crouching:
+		s *= 0.7
+	return s + bloom
 
 # ---------- aiming & shooting ----------
 func _cam_ray(length: float) -> Dictionary:
@@ -132,12 +183,33 @@ func compute_aim() -> void:
 	aim_target = best
 
 func fire() -> void:
-	if not weapon or in_car or dead or shoot_cd > 0.0:
+	if not weapon or in_car or dead or shoot_cd > 0.0 or reload_t > 0.0:
 		return
-	shoot_cd = 0.28
+	if mag <= 0:
+		Sfx.play("dry")
+		shoot_cd = 0.3
+		reload()
+		return
+	shoot_cd = 0.24
+	mag -= 1
+	last_shot = Game.t
+	sprint_lock = false
 	var r := _cam_ray(70.0)
 	var start: Vector3 = r.start
 	var dir: Vector3 = r.dir
+	# random point in the spread cone
+	var cone := deg_to_rad(spread()) * sqrt(randf())
+	var ang := randf() * TAU
+	var rx := dir.cross(Vector3.UP).normalized()
+	var ry := rx.cross(dir)
+	dir = (dir + (rx * cos(ang) + ry * sin(ang)) * tan(cone)).normalized()
+	var hit_w = Game.main.ray(start, start + dir * 70.0, Game.L_WORLD)
+	r.max_t = start.distance_to(hit_w.position) if hit_w else 70.0
+	bloom = minf(bloom + (0.45 if ads else 1.1), 4.5)
+	# recoil kick: the view climbs a little with every shot
+	var cam = Game.main.camera
+	cam.recoil(0.011 if ads else 0.018, randf_range(-0.006, 0.006))
+	model.shot("fire")
 	var t_hit: float = r.max_t
 	var hit_char = null
 	var hit_cam = null
@@ -168,7 +240,7 @@ func fire() -> void:
 				t_hit = tt
 				hit_cam = cm
 				hit_char = null
-	var muzzle := global_position + Vector3(0, 1.45 + Game.ground_y(global_position.x, global_position.z), 0) + U.fwd(yaw) * 0.5 - U.right(yaw) * 0.25
+	var muzzle: Vector3 = model.muzzle() if gun.visible else global_position + Vector3(0, 1.45 + Game.ground_y(global_position.x, global_position.z), 0) + U.fwd(yaw) * 0.5 - U.right(yaw) * 0.25
 	var hp := start + dir * t_hit
 	Game.main.fx.tracer(muzzle, hp)
 	Game.main.camera.shake = maxf(Game.main.camera.shake, 0.05)
@@ -195,6 +267,7 @@ func fire() -> void:
 	if hit_char != null:
 		Sfx.play("hit")
 		hit_char.damage(34.0, self)
+		Game.main.hud.canvas.hit_marker(hit_char.dead or hit_char.ko)
 		if hit_char.role == "cop":
 			Game.record.shots_at_cops += 1
 			Game.police.raise_stars(clampi(Game.wanted.stars + (1 if hit_char.dead else 0), 3, Game.MAX_STARS), global_position, "Shots fired at police")
@@ -310,6 +383,8 @@ func take_from_trunk(car) -> void:
 	Game.notify("Took what fits in your bag" if not car.trunk.is_empty() else "Took all loot from the trunk")
 
 func takedown(c) -> void:
+	yaw = atan2(c.global_position.x - global_position.x, c.global_position.z - global_position.z)
+	model.shot("punch")
 	c.knock_out()
 	Sfx.play("kick")
 	if c.site != null:
@@ -359,6 +434,9 @@ func enter_car(car) -> void:
 	car.sleeping = false
 	set_hidden(true)
 	weapon = false
+	ads = false
+	crouching = false
+	sprint_lock = false
 	action = null
 	var pt = Game.partner
 	if pt and pt.in_car == null and U.d2(pt.global_position, car.global_position) < 18.0:
@@ -461,6 +539,16 @@ func update_player(dt: float) -> void:
 		if not inp.gas and not inp.brake and not k_gas and not k_brake:
 			thr = clampf(inp.jy * 1.25, -1.0, 1.0) if absf(inp.jy) > 0.3 else 0.0
 		var st := -1.0 if (key(KEY_A) or key(KEY_LEFT)) else (1.0 if (key(KEY_D) or key(KEY_RIGHT)) else signf(inp.jx) * pow(absf(inp.jx), 1.35))
+		if inp.get("steer_l", false) or inp.get("steer_r", false):
+			# digital buttons: ramp the input so a tap is a lane nudge, a hold a full turn
+			var want := (1.0 if inp.get("steer_r", false) else 0.0) - (1.0 if inp.get("steer_l", false) else 0.0)
+			_btn_steer = move_toward(_btn_steer, want, dt * (3.2 if signf(want) == signf(_btn_steer) or want == 0.0 else 7.0))
+			st = _btn_steer
+		else:
+			_btn_steer = 0.0
+		if key(KEY_N) and not _horn_key:
+			honk()
+		_horn_key = key(KEY_N)
 		car.throttle = thr
 		car.steer_in = st
 		car.handbrake = inp.handbrake or key(KEY_SPACE)
@@ -480,9 +568,8 @@ func update_player(dt: float) -> void:
 	Sfx.set_loop("engine", 0.0)
 	Sfx.set_loop("screech", 0.0)
 	var cam = Game.main.camera
-	var mag := minf(1.0, Vector2(jx, jy).length())
 	if surrendering:
-		if mag > 0.5 or weapon or Game.wanted.stars == 0:
+		if mag_in(jx, jy) > 0.5 or weapon or Game.wanted.stars == 0:
 			surrendering = false
 			if Game.wanted.stars > 0:
 				Game.notify("You broke your surrender!", "bad")
@@ -492,24 +579,99 @@ func update_player(dt: float) -> void:
 			show_gun = false
 			speed_now = 0.0
 			return
+	# timers
+	if reload_t > 0.0:
+		reload_t -= dt
+		if reload_t <= 0.0:
+			mag = MAG
+	bloom = maxf(0.0, bloom - dt * (7.0 if ads else 4.5))
 	var mv := U.fwd(cam.yaw) * jy + U.right(cam.yaw) * jx
-	var moving := mag > 0.15
+	var moving := mag_in(jx, jy) > 0.15
+	var mag_s := mag_in(jx, jy)
+	if not moving:
+		sprint_lock = false
+	sprinting = moving and (sprint or sprint_lock or (mag_s > 0.97 and not weapon)) and not crouching and not ads and jy > -0.3 and reload_t <= 0.0
 	var spd := 0.0
 	if moving:
 		mv = mv.normalized()
-		var run := (sprint or mag > 0.97) and not weapon
-		spd = (3.0 if weapon else (6.2 if run else 3.4)) * (1.0 if run else maxf(0.45, mag))
-		if not weapon:
+		if sprinting:
+			spd = 6.2
+		elif crouching:
+			spd = 1.7 * maxf(0.5, mag_s)
+		elif weapon:
+			spd = (2.0 if ads else 3.0) * maxf(0.45, mag_s)
+		else:
+			spd = 3.4 * maxf(0.45, mag_s)
+		if not weapon or sprinting:
 			yaw += U.ang_diff(yaw, atan2(mv.x, mv.z)) * minf(1.0, dt * 12.0)
 	move_dir(mv if moving else Vector3.ZERO, spd, dt)
-	if weapon:
+	var aiming := weapon and not sprinting
+	if aiming:
 		yaw = cam.yaw
 	speed_now = spd
-	pose = "aim" if weapon else ("work" if action != null else "stand")
+	aim_pitch = clampf((0.22 - cam.pitch) / 0.55, -1.0, 1.0)
 	show_gun = weapon
+	if aiming:
+		pose = "aim"
+	elif action != null:
+		pose = _action_pose(action.label)
+	else:
+		pose = "stand"
 	bag_mesh.visible = not Game.bag.is_empty()
 	if crumbs.is_empty() or U.d2(crumbs[crumbs.size() - 1], global_position) > 0.7:
 		crumbs.append(global_position)
 	update_action(dt, moving)
+	if action == null and _act_crouch:
+		_act_crouch = false
+		crouching = false
+	elif action != null and (action.label.begins_with("Smash") or action.label.begins_with("Kick") or action.label.begins_with("Force")):
+		if not model.shot_active("smash"):
+			model.shot("smash")
 	if weapon and (inp.fire or key(KEY_F) or Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT) and Input.mouse_mode == Input.MOUSE_MODE_CAPTURED):
 		fire()
+	# desktop: hold right mouse to aim down sights
+	if Input.mouse_mode == Input.MOUSE_MODE_CAPTURED:
+		var rmb := Input.is_mouse_button_pressed(MOUSE_BUTTON_RIGHT)
+		if rmb != _rmb:
+			_rmb = rmb
+			if rmb != ads:
+				toggle_ads()
+
+var _rmb := false
+var _btn_steer := 0.0
+var _horn_key := false
+var _horn_cd := 0.0
+
+## car horn: peds in front of the car jump aside
+func honk() -> void:
+	if in_car == null or Game.t < _horn_cd:
+		return
+	_horn_cd = Game.t + 0.45
+	Sfx.play("horn")
+	var car = in_car
+	var f: Vector3 = U.fwd(car.yaw())
+	for c in Game.chars:
+		if c.hidden or c.dead or c.ko or c.role in ["cop", "partner", "player"]:
+			continue
+		var d: Vector3 = c.global_position - car.global_position
+		var ahead := d.dot(f)
+		if ahead > 0.0 and ahead < 14.0 and absf(d.dot(U.right(car.yaw()))) < 3.0:
+			Game.main.npc_ai.dodge(c, car, signf(d.dot(U.right(car.yaw()))) if d.dot(U.right(car.yaw())) != 0.0 else 1.0)
+var _act_crouch := false
+
+static func mag_in(x: float, y: float) -> float:
+	return minf(1.0, Vector2(x, y).length())
+
+## which full-body animation a timed interaction uses
+func _action_pose(label: String) -> String:
+	for k in ["Search", "Zip-tie", "Take their wallet", "Pry", "Plant", "Grab delivery", "Grab cash case"]:
+		if label.begins_with(k):
+			if not crouching:
+				crouching = true
+				_act_crouch = true
+			return "stand"
+	if label.begins_with("Greet"):
+		return "wave"
+	if label.begins_with("Talk") or label.begins_with("Rest") or label.begins_with("Antagonize") or label.begins_with("Change outfit") or label.begins_with("Deposit"):
+		return "stand"
+	return "work"

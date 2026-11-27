@@ -33,6 +33,8 @@ const FPS_CHOICES := [60, 30]
 
 var quality := "high"
 var look_sensitivity := 1.0
+var steer_mode := "buttons"   # vehicle steering: "buttons" (left/right) or "stick"
+var left_fire := true         # second fire button on the left (COD Mobile style)
 var show_fps := false
 var auto_res := true
 var fps_cap := 60
@@ -56,6 +58,8 @@ func _ready() -> void:
 		show_fps = cfg.get_value("graphics", "show_fps", false)
 		auto_res = cfg.get_value("graphics", "auto_res", true)
 		fps_cap = cfg.get_value("graphics", "fps_cap", 60)
+		steer_mode = cfg.get_value("controls", "steer_mode", "buttons")
+		left_fire = cfg.get_value("controls", "left_fire", true)
 	if not PRESETS.has(quality):
 		quality = "medium"
 
@@ -66,6 +70,8 @@ func save() -> void:
 	cfg.set_value("graphics", "auto_res", auto_res)
 	cfg.set_value("graphics", "fps_cap", fps_cap)
 	cfg.set_value("controls", "look_sensitivity", look_sensitivity)
+	cfg.set_value("controls", "steer_mode", steer_mode)
+	cfg.set_value("controls", "left_fire", left_fire)
 	cfg.save("user://settings.cfg")
 
 func cycle_quality() -> void:

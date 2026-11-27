@@ -6,10 +6,10 @@ signal shop_requested
 signal wasted_or_busted(kind: String, why: String)
 
 const OUTFITS := [
-	{"name": "Blue hoodie", "color": Color("2f6fe0")},
-	{"name": "Green jacket", "color": Color("2fa04f")},
-	{"name": "Tan coat", "color": Color("c9a26b")},
-	{"name": "Red tracksuit", "color": Color("d23c3c")},
+	{"name": "Charcoal tee", "color": Color("2c2d30"), "part": "tee"},
+	{"name": "Green jacket", "color": Color("35553c"), "part": "jacket"},
+	{"name": "Tan shirt", "color": Color("c9a26b"), "part": "shirt"},
+	{"name": "Red long-sleeve", "color": Color("b8322f"), "part": "longsleeve"},
 ]
 const CAR_COLORS := [Color("e0e0e0"), Color("2b2b2b"), Color("c0392b"), Color("2471a3"), Color("d4ac0d"), Color("1e8449"), Color("8e44ad"), Color("e67e22")]
 const CAR_COLOR_NAMES := ["white", "black", "red", "blue", "yellow", "green", "purple", "orange"]

@@ -37,6 +37,10 @@ func give_traits(c: Character) -> void:
 
 func npc_shoot(c: Character, target: Character, hit_chance: float, dmg: float) -> void:
 	var a := c.global_position + Vector3(0, 1.4, 0) + U.fwd(c.yaw) * 0.4
+	if c.model and not c.hidden:
+		c.model.shot("fire")
+		if c.gun and c.gun.visible:
+			a = c.model.muzzle()
 	var b := target.global_position + Vector3(0, 1.1 + randf() * 0.5, 0)
 	var hit := randf() < hit_chance
 	if not hit:
@@ -291,6 +295,9 @@ func dodge(c: Character, car, side: float) -> void:
 		return
 	var r: Vector3 = U.right(car.yaw()) * side
 	c.mem.dodge_t = 0.45
+	if c.model:
+		c.yaw = atan2(car.global_position.x - c.global_position.x, car.global_position.z - c.global_position.z)
+		c.model.shot("dodge")
 	c.mem.dodge_to = c.global_position + r * 2.6
 	c.fear = minf(1.0, c.fear + 0.4)
 	if c.role in ["pedestrian", "driver"] and car.driver == "player":
