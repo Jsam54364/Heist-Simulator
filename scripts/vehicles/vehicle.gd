@@ -52,9 +52,13 @@ var occupants := [null, null, null, null]   # seated Characters: 0 driver, 1 pas
 ## hip joint of each seat in car space (people are posed seated with their hips here)
 var seats := [Vector3(0.36, 0.52, -0.30), Vector3(-0.36, 0.52, -0.30), Vector3(0.36, 0.55, -1.15), Vector3(-0.36, 0.55, -1.15)]
 
+## seat back angle (deg): low cars lean the seated body back about the hips (from cars.json)
+var recline := 0.0
+
 func seat_transform(i: int) -> Transform3D:
 	var s: Vector3 = seats[clampi(i, 0, seats.size() - 1)]
-	return Transform3D(Basis.IDENTITY, s - Vector3(0, 0.96, 0))
+	var b := Basis(Vector3.RIGHT, -deg_to_rad(recline))
+	return Transform3D(b, s - b * Vector3(0, 0.96, 0))
 var siren := false
 var parked := false
 var removed := false

@@ -75,7 +75,7 @@ scripts/world/              Key Lento generator (keys_gen.gd), robbery sites, ch
 scripts/actors/             Character, Player, NPC AI, Police, HumanModel (assembly + AnimationTree), Outfits
 assets/models/              human_m.glb / human_f.glb (rig + parts + 41 clips each), props.glb
 assets/characters/          Character atlases (albedo / normal / hair) + humans.json part catalogue
-scripts/vehicles/           Vehicle physics + procedural car models
+scripts/vehicles/           Vehicle physics + car models (assets/models/cars.glb)
 scripts/gameplay/           Robbery systems, traffic, FX, follow camera
 scripts/ui/                 HUD, touch controls, menus, map
 scripts/tests/              smoke.gd (headless gameplay test), shots.gd (screenshot tour), profile.gd (performance)
@@ -98,12 +98,9 @@ android/debug.keystore      Shared debug key so APKs update in place (not secret
 - **Interiors** get warm ceiling lights and an interior ReflectionProbe (local ambient + reflections on
   marble/tile floors), so they are not lit by the blue sky.
 - **Next visual steps** (in rough order of payoff):
-  1. Replace the box characters with rigged glTF models + an AnimationTree (the gameplay code only talks to
-     `Character.pose`, `speed_now`, `show_gun` and the mask flag).
-  2. Replace procedural cars with modelled glTF cars (keep `Vehicle.gd`, swap `CarModel.build`).
-  3. Bake lightmaps (LightmapGI) for interiors, add decals (grime, puddles, graffiti), more props.
-  4. Day/night cycle: rotate the Sun, drive sky colours + street lamp emission from a time-of-day curve.
-  5. To try Forward+ features on a high-end phone: Project Settings → Rendering → Renderer →
+  1. Bake lightmaps (LightmapGI) for interiors, add decals (grime, puddles, graffiti), more props.
+  2. Day/night cycle: rotate the Sun, drive sky colours + street lamp emission from a time-of-day curve.
+  3. To try Forward+ features on a high-end phone: Project Settings → Rendering → Renderer →
      `rendering_method.mobile` = `forward_plus`.
 
 ## Performance: how the world stays fast on phones
@@ -158,17 +155,44 @@ bodies, clothes, shoes, hair cards, eyebrows/eyelashes, eyes, photo skins, defau
   athletic female ~1.70 m); the player's and partner's faces are projected from those sheets onto
   their heads (affine fit to the eyes + mouth), and their whole-body skin is tone-matched to the face
 * our game skeleton (with finger joints) sits on MakeHuman's joint centroids; MakeHuman's painted
-  weights are mapped onto it; the rest pose is normalised so all 41 animation clips (IK-authored in
+  weights are mapped onto it; the rest pose is normalised so all 42 animation clips (keyed ones IK-authored in
   `human_anims.py` / `human_library.py`) bake onto both bodies
+* locomotion (idle, walk, jog, sprint, panic run, crouch walk, the aim set incl. 4-way strafes, jumps,
+  punch, wave) is real **motion capture** from the CMU Graphics Lab database, retargeted onto our rig in
+  `mocap.py`: per-bone rest-direction alignment, hips scaled by leg-length ratio, travel removed so the
+  clips play in place (the measured ground speed goes to `humans.json` and the AnimationTree matches
+  playback speed to it), loops found by pose/velocity matching and closed with slerped residuals; armed
+  clips keep the mocap legs and layer a keyed aim pose on top
+* joints deform like real ones: twist bones spread forearm/upper-arm/thigh twist (swing-twist split),
+  and half-angle elbow/knee helper bones take the shared skin weight so bent joints keep their volume
 * outfits mix and match: suits are split into tops/bottoms, each with a coverage bit so hidden skin is
   removed when the game assembles a person into ONE skinned mesh with two draw calls (opaque atlas +
   alpha-tested hair); garments are tinted per character in `character.gdshader`
 
 ```
 bash tools/blender/fetch_makehuman.sh                 # CC0 asset data (once, not in this repo)
+bash tools/blender/fetch_mocap.sh                     # the 11 CMU mocap clips used (once), export CMU_BVH
 pip install bpy pillow numpy
 python tools/blender/make_mh_humans.py                # -> assets/models/human_*.glb, assets/characters/*
 ```
+
+## Vehicles
+
+`tools/blender/make_cars.py` models every vehicle (sedan, coupe, SUV, pickup with bed cover, taxi,
+police interceptor with light bar and push bar, SWAT van, armoured truck, the police helicopter and
+a shared alloy wheel) into `assets/models/cars.glb` + `cars.json`:
+
+* bodies are lofted through cross-section stations taken from real proportions for each class
+  (bumper, hood, cowl, windshield, roof, rear glass, deck), subdivided, wheel arches boolean-cut with
+  dark liners, door shut lines, A/B pillars, glass bands, mirrors, handles, swept head lights, tail
+  lights, grille, plates
+* each cabin has a lining, seats, dash, console and a steering wheel placed where the seated driver's
+  hands are; seat hip points (and a seat-back recline for low cars) go to `cars.json`, so people sit
+  in the seats with their feet in the footwell
+* one paint surface per car (colour swapped at runtime), shared glass, and all trim/lights/wheels on
+  the single `car_parts` shader (tail lights brighten on braking via an instance uniform)
+
+`python tools/blender/make_cars.py`; check them with `res://scenes/tests/garage.tscn` (renders to /tmp).
 
 ## Building
 

@@ -177,7 +177,26 @@
   },
   "scale": 1.0173,
   "height": 1.81,
-  "clips": 41
+  "clips": 42,
+  "clip_speeds": {
+   "idle": 0.002,
+   "walk": 1.031,
+   "jog": 2.984,
+   "sprint": 5.024,
+   "panic_run": 3.734,
+   "crouch_walk": 0.625,
+   "aim_idle": 0.002,
+   "aim_walk_f": 1.031,
+   "aim_jog_f": 2.984,
+   "aim_walk_b": 0.871,
+   "aim_walk_l": 0.716,
+   "aim_walk_r": 0.716,
+   "jump_start": 0.78,
+   "jump_air": 1.091,
+   "jump_land": 0.57,
+   "punch": 0.818,
+   "wave": 0.01
+  }
  },
  "f": {
   "parts": {
@@ -238,7 +257,7 @@
    "tank": {
     "slot": 1,
     "kind": "top",
-    "lum": 0.2794528957250675,
+    "lum": 0.27939555111322695,
     "source": "female_sportsuit01",
     "bit": 10
    },
@@ -370,6 +389,25 @@
   },
   "scale": 0.9199,
   "height": 1.7,
-  "clips": 41
+  "clips": 42,
+  "clip_speeds": {
+   "idle": 0.002,
+   "walk": 1.027,
+   "jog": 2.975,
+   "sprint": 5.009,
+   "panic_run": 3.723,
+   "crouch_walk": 0.623,
+   "aim_idle": 0.002,
+   "aim_walk_f": 1.027,
+   "aim_jog_f": 2.975,
+   "aim_walk_b": 0.868,
+   "aim_walk_l": 0.714,
+   "aim_walk_r": 0.714,
+   "jump_start": 0.778,
+   "jump_air": 1.087,
+   "jump_land": 0.568,
+   "punch": 0.816,
+   "wave": 0.01
+  }
  }
 }

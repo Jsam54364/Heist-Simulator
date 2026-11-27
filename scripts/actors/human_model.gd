@@ -22,12 +22,13 @@ extends Node3D
 ## The tree is evaluated manually (Character drives advance()) so distant people animate
 ## at a fraction of the frame rate.
 
-const LOOPS := ["idle", "walk", "jog", "sprint", "panic_run", "crouch_walk", "crouch_idle", "aim_idle", "aim_crouch", "aim_walk_f",
+const LOOPS := ["idle", "walk", "jog", "sprint", "panic_run", "crouch_walk", "crouch_idle", "aim_idle", "aim_crouch", "aim_walk_f", "aim_jog_f",
 	"aim_walk_l", "aim_walk_r", "aim_walk_b", "jump_air", "handsup", "cower", "kneel_hands", "tied", "phone", "text", "film", "wave",
 	"work", "drive", "sit"]
 const HANDS := ["hand.L", "fingers.L", "fingers_mid.L", "fingers_tip.L", "thumb.L", "thumb_tip.L",
 	"hand.R", "fingers.R", "fingers_mid.R", "fingers_tip.R", "thumb.R", "thumb_tip.R", "weapon.R", "prop.R"]
-const ARMS := ["shoulder.L", "upper_arm.L", "forearm.L", "shoulder.R", "upper_arm.R", "forearm.R"] + HANDS
+const ARMS := ["shoulder.L", "upper_arm.L", "upper_arm_twist.L", "elbow.L", "forearm.L", "forearm_twist.L",
+	"shoulder.R", "upper_arm.R", "upper_arm_twist.R", "elbow.R", "forearm.R", "forearm_twist.R"] + HANDS
 const UPPER := ["spine", "chest", "neck", "head"] + ARMS
 const MODES := ["loco", "handsup", "cower", "kneel", "tied", "phone", "text", "film", "wave", "work", "drive", "sit", "dead_b", "dead_f", "air"]
 const STANCES := ["stand", "aim", "crouch", "crouch_aim", "panic"]
@@ -47,6 +48,9 @@ static var tree_root: AnimationNodeBlendTree
 static var mat_op: ShaderMaterial
 static var mat_hair: ShaderMaterial
 static var ready_shared := false
+## ground speed (m/s) each locomotion clip was captured at (measured from the mocap)
+static var SPD := {"walk": 1.03, "jog": 2.98, "sprint": 5.0, "panic_run": 3.7, "crouch_walk": 0.63, "aim_walk_f": 1.03, "aim_jog_f": 2.98,
+	"aim_walk_b": 0.8, "aim_walk_l": 0.8, "aim_walk_r": 0.8}
 
 var inst: Node3D
 var skel: Skeleton3D
@@ -110,6 +114,10 @@ static func _shared() -> void:
 			bm[i] = roundi(c.r * 255.0) | (roundi(c.g * 255.0) << 8) | (roundi(c.b * 255.0) << 16) | (roundi(c.a * 255.0) << 24)
 		body_masks[gk] = bm
 		probe.free()
+	for k in catalogue.get("m", {}).get("clip_speeds", {}):
+		var v: float = catalogue.m.clip_speeds[k]
+		if v > 0.2:
+			SPD[k] = v
 	tree_root = _build_tree()
 
 ## one skinned mesh (2 surfaces) for a gender + part list; cached
@@ -201,23 +209,24 @@ static func _build_tree() -> AnimationNodeBlendTree:
 	var x := 0.0
 	# --- locomotion sets
 	var stand := AnimationNodeBlendSpace1D.new()
-	for p in [["idle", 0.0], ["walk", 1.35], ["jog", 3.6], ["sprint", 6.2]]:
+	for p in [["idle", 0.0], ["walk", SPD.walk], ["jog", SPD.jog], ["sprint", SPD.sprint]]:
 		stand.add_blend_point(_clip(p[0]), p[1], -1, p[0])
 	stand.min_space = 0.0
 	stand.max_space = 7.0
 	bt.add_node("stand", stand, Vector2(0, 0))
 	var aim := AnimationNodeBlendSpace2D.new()
 	aim.add_blend_point(_clip("aim_idle"), Vector2(0, 0), -1, "aim_idle")
-	aim.add_blend_point(_clip("aim_walk_f"), Vector2(0, 1.6), -1, "aim_walk_f")
-	aim.add_blend_point(_clip("aim_walk_b"), Vector2(0, -1.3), -1, "aim_walk_b")
-	aim.add_blend_point(_clip("aim_walk_l"), Vector2(1.4, 0), -1, "aim_walk_l")
-	aim.add_blend_point(_clip("aim_walk_r"), Vector2(-1.4, 0), -1, "aim_walk_r")
-	aim.min_space = Vector2(-2, -2)
-	aim.max_space = Vector2(2, 2)
+	aim.add_blend_point(_clip("aim_walk_f"), Vector2(0, SPD.aim_walk_f), -1, "aim_walk_f")
+	aim.add_blend_point(_clip("aim_jog_f"), Vector2(0, SPD.aim_jog_f), -1, "aim_jog_f")
+	aim.add_blend_point(_clip("aim_walk_b"), Vector2(0, -SPD.aim_walk_b), -1, "aim_walk_b")
+	aim.add_blend_point(_clip("aim_walk_l"), Vector2(SPD.aim_walk_l, 0), -1, "aim_walk_l")
+	aim.add_blend_point(_clip("aim_walk_r"), Vector2(-SPD.aim_walk_r, 0), -1, "aim_walk_r")
+	aim.min_space = Vector2(-3.5, -3.5)
+	aim.max_space = Vector2(3.5, 3.5)
 	bt.add_node("aim", aim, Vector2(0, 150))
 	var cr := AnimationNodeBlendSpace1D.new()
 	cr.add_blend_point(_clip("crouch_idle"), 0.0, -1, "crouch_idle")
-	cr.add_blend_point(_clip("crouch_walk"), 1.3, -1, "crouch_walk")
+	cr.add_blend_point(_clip("crouch_walk"), SPD.crouch_walk, -1, "crouch_walk")
 	cr.max_space = 2.0
 	bt.add_node("crouch", cr, Vector2(0, 300))
 	bt.add_node("crouch_aim", _clip("aim_crouch"), Vector2(0, 450))
@@ -443,20 +452,30 @@ func drive(dt: float, mode: String, stance: String, world_pos: Vector3, yaw: flo
 		tree.set("parameters/stance/transition_request", stance)
 	match stance:
 		"stand":
-			tree.set("parameters/stand/blend_position", _speed)
-			var nominal := 1.35 if _speed < 2.4 else (3.6 if _speed < 4.9 else 6.2)
-			tree.set("parameters/ts_stand/scale", clampf(_speed / nominal, 0.8, 1.45) if _speed > 0.5 else 1.0)
+			tree.set("parameters/stand/blend_position", minf(_speed, SPD.sprint))
+			# play at the speed the feet actually travel: inside the captured range the blend
+			# itself matches, outside it the clip is sped up / slowed down
+			var nat := clampf(_speed, SPD.walk, SPD.sprint)
+			tree.set("parameters/ts_stand/scale", clampf(_speed / nat, 0.6, 1.4) if _speed > 0.3 else 1.0)
 		"aim", "crouch_aim":
 			var f := Vector3(sin(yaw), 0, cos(yaw))
 			var l := Vector3(cos(yaw), 0, -sin(yaw))
 			var lv := Vector2(_vel.dot(l), _vel.dot(f))
-			tree.set("parameters/aim/blend_position", lv)
-			tree.set("parameters/ts_aim/scale", clampf(lv.length() / 1.5, 0.8, 1.4) if lv.length() > 0.4 else 1.0)
+			var asp := lv.length()
+			var nat: float = SPD.aim_walk_f
+			if lv.y > absf(lv.x):
+				nat = clampf(asp, SPD.aim_walk_f, SPD.get("aim_jog_f", SPD.aim_walk_f))
+			elif lv.y < -absf(lv.x):
+				nat = SPD.aim_walk_b
+			else:
+				nat = SPD.aim_walk_l
+			tree.set("parameters/aim/blend_position", lv.limit_length(maxf(nat, 0.01)) if asp > nat else lv)
+			tree.set("parameters/ts_aim/scale", clampf(asp / nat, 0.6, 2.3) if asp > 0.3 else 1.0)
 		"crouch":
-			tree.set("parameters/crouch/blend_position", _speed)
-			tree.set("parameters/ts_crouch/scale", clampf(_speed / 1.3, 0.8, 1.6) if _speed > 0.4 else 1.0)
+			tree.set("parameters/crouch/blend_position", minf(_speed, SPD.crouch_walk))
+			tree.set("parameters/ts_crouch/scale", clampf(_speed / SPD.crouch_walk, 0.6, 2.0) if _speed > SPD.crouch_walk else 1.0)
 		"panic":
-			tree.set("parameters/ts_panic/scale", clampf(_speed / 5.0, 0.8, 1.3))
+			tree.set("parameters/ts_panic/scale", clampf(_speed / SPD.panic_run, 0.7, 1.45))
 	var aiming: bool = stance in ["aim", "crouch_aim"]
 	tree.set("parameters/upper/blend_amount", 1.0 if aiming and mode == "loco" else 0.0)
 	if aiming:

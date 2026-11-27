@@ -23,7 +23,7 @@ extends Node
 const STATION_X := 330.0
 const UNITS_FOR := [0, 1, 2, 3, 4, 5, 6]
 var units: Array = []
-var heli := {"node": null, "rotor": null, "spot": null, "leaving": false, "hp": 100.0, "cool": 0.0, "cd": 2.0}
+var heli := {"node": null, "rotor": null, "tail": null, "body": null, "spot": null, "leaving": false, "hp": 100.0, "cool": 0.0, "cd": 2.0}
 var dogs: Array = []
 var roadblocks: Array = []
 var perc_t := 0.0
@@ -722,47 +722,24 @@ func _remove_roadblock(rb: Dictionary) -> void:
 
 # =================================================================== helicopter
 func make_heli(pos: Vector3) -> void:
+	## modelled in tools/blender/make_cars.py (cars.glb): fuselage + spinning main / tail rotors
+	CarModel._shared()
 	var root := Node3D.new()
 	Game.world.add_child(root)
 	root.position = pos
-	var mat := Mats.solid(Color("1b2f63"), 0.4, 0.3)
-	var white := Mats.solid(Color("e9edf2"), 0.4, 0.2)
 	var body := MeshInstance3D.new()
-	var bm := CapsuleMesh.new()
-	bm.radius = 1.1
-	bm.height = 5.0
-	body.mesh = bm
-	body.rotation.x = PI / 2
-	body.material_override = mat
+	body.mesh = CarModel.meshes.heli_body
 	root.add_child(body)
-	var stripe := MeshInstance3D.new()
-	var sm := BoxMesh.new()
-	sm.size = Vector3(2.25, 0.35, 3.0)
-	stripe.mesh = sm
-	stripe.material_override = white
-	root.add_child(stripe)
-	var tail := MeshInstance3D.new()
-	var tm := BoxMesh.new()
-	tm.size = Vector3(0.4, 0.4, 4.0)
-	tail.mesh = tm
-	tail.material_override = mat
-	tail.position = Vector3(0, 0.4, -4.2)
-	root.add_child(tail)
-	for sx in [-0.9, 0.9]:
-		var skid := MeshInstance3D.new()
-		var km := BoxMesh.new()
-		km.size = Vector3(0.12, 0.12, 3.6)
-		skid.mesh = km
-		skid.material_override = Mats.solid(Color("111111"), 0.5)
-		skid.position = Vector3(sx, -1.35, 0)
-		root.add_child(skid)
 	var rotor := MeshInstance3D.new()
-	var rm := BoxMesh.new()
-	rm.size = Vector3(9, 0.08, 0.4)
-	rotor.mesh = rm
-	rotor.material_override = Mats.solid(Color("111111"), 0.5)
-	rotor.position.y = 1.2
+	rotor.mesh = CarModel.meshes.heli_rotor
+	rotor.position = Vector3(0, 1.45, -0.2)
 	root.add_child(rotor)
+	var tail := MeshInstance3D.new()
+	tail.mesh = CarModel.meshes.heli_tail_rotor
+	tail.position = Vector3(0.22, 0.95, -5.55)
+	root.add_child(tail)
+	heli.body = body
+	heli.tail = tail
 	var spot := SpotLight3D.new()
 	spot.light_energy = 6.0
 	spot.spot_range = 70.0
@@ -788,6 +765,9 @@ func update_heli(dt: float) -> void:
 		return
 	var hn: Node3D = heli.node
 	heli.rotor.rotation.y += dt * 30.0
+	heli.tail.rotation.x += dt * 70.0
+	# anti-collision beacons (the parts shader's tail-light class) flash once a second
+	heli.body.set_instance_shader_parameter("brake", 6.0 if fmod(Game.t, 1.0) < 0.1 else 0.4)
 	if w.stars < 3:
 		heli.leaving = true
 	var tgt: Vector3

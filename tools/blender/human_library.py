@@ -457,7 +457,8 @@ def build_all(A):
         d["chest"] = (2, 0, 0)
         d["neck"] = (4, 0, 0)
         d["head"] = (2, steer * 0.3, 0)
-        sym(d, thigh_L=(78, 0, 4), shin_L=(70, 0, 0), foot_L=(-10, 0, 0))
+        # car seating: thighs level / knees a touch high, shins reaching for the pedals
+        sym(d, thigh_L=(88, 0, 6), shin_L=(52, 0, 0), foot_L=(-2, 0, 0))
         if hands == "wheel":
             d["arm_ik.L"] = 1.0
             d["arm_ik.R"] = 1.0

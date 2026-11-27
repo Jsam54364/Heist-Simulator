@@ -47,6 +47,7 @@ import humans as H
 import human_anims as HA
 import human_library as HL
 import make_humans as MHU
+import human_mocap as HMC
 
 ROOT = os.path.abspath(os.path.join(HERE, "..", ".."))
 MODELS = os.path.join(ROOT, "assets", "models")
@@ -444,8 +445,12 @@ def map_bone(b):
         return "neck"
     if n in ("clavicle", "shoulder01"):
         return "shoulder" + side
+    if n == "upperarm01":
+        return "upper_arm_twist" + side        # shoulder half: counter-twists
     if n.startswith("upperarm"):
         return "upper_arm" + side
+    if n == "lowerarm02":
+        return "forearm_twist" + side          # wrist half: follows the hand's twist
     if n.startswith("lowerarm"):
         return "forearm" + side
     if n == "wrist" or n.startswith("metacarpal") or n == "finger1-1":
@@ -457,6 +462,8 @@ def map_bone(b):
     if n.startswith("finger"):
         k = n.split("-")[1]
         return {"1": "fingers", "2": "fingers_mid", "3": "fingers_tip"}[k] + side
+    if n == "upperleg01":
+        return "thigh_twist" + side            # hip half: counter-twists
     if n.startswith("upperleg"):
         return "thigh" + side
     if n.startswith("lowerleg"):
@@ -469,8 +476,25 @@ def map_bone(b):
 
 
 EXTRA_BONES = ["fingers_mid", "fingers_tip", "thumb_tip"]
-TOP_BONES = {"spine", "chest", "neck", "shoulder.L", "shoulder.R", "upper_arm.L", "upper_arm.R", "forearm.L", "forearm.R", "hand.L", "hand.R"}
-BOTTOM_BONES = {"hips", "thigh.L", "thigh.R", "shin.L", "shin.R"}
+TOP_BONES = {"spine", "chest", "neck", "shoulder.L", "shoulder.R", "upper_arm.L", "upper_arm.R", "forearm.L", "forearm.R", "hand.L", "hand.R",
+             "upper_arm_twist.L", "upper_arm_twist.R", "forearm_twist.L", "forearm_twist.R", "elbow.L", "elbow.R"}
+BOTTOM_BONES = {"hips", "thigh.L", "thigh.R", "shin.L", "shin.R", "thigh_twist.L", "thigh_twist.R", "knee.L", "knee.R"}
+# half-angle joint helpers: skin shared by (upper, lower) moves to the helper, which turns
+# half as far as the lower bone - LBS then blends 0 / half / full instead of 0 / full,
+# so elbows and knees keep their volume instead of collapsing
+JOINT_HELPERS = [("upper_arm.L", "forearm.L", "elbow.L"), ("upper_arm.R", "forearm.R", "elbow.R"),
+                 ("thigh.L", "shin.L", "knee.L"), ("thigh.R", "shin.R", "knee.R")]
+
+
+def split_joints(wts):
+    for d in wts:
+        for a, b, h in JOINT_HELPERS:
+            m = min(d.get(a, 0.0), d.get(b, 0.0))
+            if m > 0.0:
+                d[a] -= m
+                d[b] -= m
+                d[h] = d.get(h, 0.0) + 2.0 * m
+    return wts
 
 
 def rig_joints(bv):
@@ -493,6 +517,13 @@ def rig_joints(bv):
         out["fingers." + s] = (J("finger3-1." + s), J("finger3-2." + s))
         out["fingers_mid." + s] = (J("finger3-2." + s), J("finger3-3." + s))
         out["fingers_tip." + s] = (J("finger3-3." + s), J("finger3-3." + s, "tail"))
+        out["upper_arm_twist." + s] = (J("upperarm01." + s), J("upperarm02." + s))
+        out["forearm_twist." + s] = (J("lowerarm02." + s), J("wrist." + s))
+        out["thigh_twist." + s] = (J("upperleg01." + s), J("upperleg02." + s))
+        el = J("lowerarm01." + s)
+        out["elbow." + s] = (el, el + (J("wrist." + s) - el) * 0.3)
+        kn = J("lowerleg01." + s)
+        out["knee." + s] = (kn, kn + (J("foot." + s) - kn) * 0.3)
         out["thumb." + s] = (J("finger1-2." + s), J("finger1-3." + s))
         out["thumb_tip." + s] = (J("finger1-3." + s), J("finger1-3." + s, "tail"))
         out["thigh." + s] = (J("upperleg01." + s), J("lowerleg01." + s))
@@ -510,12 +541,13 @@ def rig_joints(bv):
     return out
 
 
-ROLL = {"shin": "BACK", "foot": "UP", "toe": "UP"}
+ROLL = {"shin": "BACK", "knee": "BACK", "foot": "UP", "toe": "UP"}
 PARENT = {"hips": None, "spine": "hips", "chest": "spine", "neck": "chest", "head": "neck", "shoulder": "chest", "upper_arm": "shoulder",
           "forearm": "upper_arm", "hand": "forearm", "fingers": "hand", "fingers_mid": "fingers", "fingers_tip": "fingers_mid",
-          "thumb": "hand", "thumb_tip": "thumb", "thigh": "hips", "shin": "thigh", "foot": "shin", "toe": "foot"}
-ORDER = ["hips", "spine", "chest", "neck", "head", "shoulder", "upper_arm", "forearm", "hand", "fingers", "fingers_mid", "fingers_tip",
-         "thumb", "thumb_tip", "thigh", "shin", "foot", "toe"]
+          "thumb": "hand", "thumb_tip": "thumb", "thigh": "hips", "shin": "thigh", "foot": "shin", "toe": "foot",
+          "upper_arm_twist": "upper_arm", "forearm_twist": "forearm", "thigh_twist": "thigh", "elbow": "upper_arm", "knee": "thigh"}
+ORDER = ["hips", "spine", "chest", "neck", "head", "shoulder", "upper_arm", "upper_arm_twist", "elbow", "forearm", "forearm_twist", "hand",
+         "fingers", "fingers_mid", "fingers_tip", "thumb", "thumb_tip", "thigh", "thigh_twist", "knee", "shin", "foot", "toe"]
 
 
 def _axis(name):
@@ -596,10 +628,28 @@ def normalise_pose(rig, meshes):
     bpy.ops.pose.armature_apply(selected=False)
     bpy.ops.object.mode_set(mode='OBJECT')
     realign_rolls(rig)
+    U.select_only(rig)
+    bpy.ops.object.mode_set(mode='EDIT')
+    eb = rig.data.edit_bones
+    for s in ("L", "R"):
+        for h, src, frac in (("elbow", "forearm", 0.3), ("knee", "shin", 0.3)):
+            b = eb[h + "." + s]
+            t = eb[src + "." + s]
+            b.head = t.head.copy()
+            b.tail = t.head + (t.tail - t.head) * frac
+            b.roll = t.roll
+        for h, src, a, z in (("upper_arm_twist", "upper_arm", 0.0, 0.5), ("thigh_twist", "thigh", 0.0, 0.5), ("forearm_twist", "forearm", 0.5, 1.0)):
+            b = eb[h + "." + s]
+            t = eb[src + "." + s]
+            b.head = t.head + (t.tail - t.head) * a
+            b.tail = t.head + (t.tail - t.head) * z
+            b.roll = t.roll
+    bpy.ops.object.mode_set(mode='OBJECT')
 
 
 def add_weights(obj, wts):
     """wts: list of {bone: w} per vertex -> vertex groups (top 4, normalised)."""
+    wts = split_joints(wts)
     groups = {}
     for vi, d in enumerate(wts):
         items = sorted(d.items(), key=lambda kv: -kv[1])[:4]
@@ -1148,8 +1198,55 @@ def animate(rig):
             c.owner_space = 'LOCAL'
             c.mix_mode = 'REPLACE'
             c.influence = inf
+    for s in ("L", "R"):
+        # twist distribution (swing/twist split so only the roll about the bone is shared)
+        for nm, src, inf, inv in (("forearm_twist." + s, "hand." + s, 0.5, False), ("upper_arm_twist." + s, "upper_arm." + s, 0.5, True),
+                                  ("thigh_twist." + s, "thigh." + s, 0.5, True)):
+            c = pb[nm].constraints.new('TRANSFORM')
+            c.target = rig
+            c.subtarget = src
+            c.target_space = 'LOCAL'
+            c.owner_space = 'LOCAL'
+            c.map_from = 'ROTATION'
+            c.map_to = 'ROTATION'
+            c.from_rotation_mode = 'SWING_TWIST_Y'
+            c.from_min_y_rot = -math.pi
+            c.from_max_y_rot = math.pi
+            c.map_to_x_from = 'X'
+            c.map_to_y_from = 'Y'
+            c.map_to_z_from = 'Z'
+            k = -inf if inv else inf
+            c.to_min_y_rot = -math.pi * k
+            c.to_max_y_rot = math.pi * k
+            c.mix_mode_rot = 'REPLACE'
+        # half-angle joint helpers + a little pad push-out as the joint closes
+        for nm, src, push in (("elbow." + s, "forearm." + s, -0.012), ("knee." + s, "shin." + s, -0.016)):
+            c = pb[nm].constraints.new('COPY_ROTATION')
+            c.target = rig
+            c.subtarget = src
+            c.target_space = 'LOCAL'
+            c.owner_space = 'LOCAL'
+            c.influence = 0.5
+            t = pb[nm].constraints.new('TRANSFORM')
+            t.target = rig
+            t.subtarget = src
+            t.target_space = 'LOCAL'
+            t.owner_space = 'LOCAL'
+            t.map_from = 'ROTATION'
+            t.map_to = 'LOCATION'
+            t.from_min_x_rot = 0.0
+            t.from_max_x_rot = math.radians(140)
+            t.map_to_z_from = 'X'
+            t.to_min_z = 0.0
+            t.to_max_z = push
+            t.mix_mode = 'ADD'
     A = HA.Animator(rig)
-    clips = HL.build_all(A)
+    if os.environ.get("MH_FAST"):
+        clips = []          # iteration mode: mocap clips only
+    else:
+        clips = HL.build_all(A)
+    if os.path.isdir(HMC.MC.CMU):
+        clips = [c for c in clips if c.name not in {sp[0] for sp in HMC.SPECS}] + HMC.build(A)
     for p in rig.pose.bones:
         for c in list(p.constraints):
             p.constraints.remove(c)
@@ -1160,6 +1257,8 @@ def animate(rig):
             rig.data.edit_bones.remove(b)
     bpy.ops.object.mode_set(mode='OBJECT')
     # prop sockets: pistol grip (aim pose) and phone (phone pose)
+    if "phone" not in bpy.data.actions or "aim_idle" not in bpy.data.actions:
+        return clips
     aim = bpy.data.actions["aim_idle"]
     rig.animation_data.action = aim
     bpy.context.scene.frame_set(0)
@@ -1209,7 +1308,8 @@ def main():
             skins[s] = [(r[0] - base[0]) / AW, (r[1] - base[1]) / AH]
         r = tile_rect(HEROES[gk]["tile"])
         skins[HEROES[gk]["tile"]] = [(r[0] - base[0]) / AW, (r[1] - base[1]) / AH]
-        catalogue[gk] = {"parts": meta, "skins": skins, "scale": round(real_scale, 4), "height": GENDERS[gk]["height"], "clips": len(clips)}
+        catalogue[gk] = {"parts": meta, "skins": skins, "scale": round(real_scale, 4), "height": GENDERS[gk]["height"], "clips": len(clips),
+                         "clip_speeds": {k: v["speed"] for k, v in HMC.INFO.items()}}
         print(gk, "exported", os.path.getsize(out) // 1024, "KB,", len(clips), "clips,", round(time.time() - t0, 1), "s")
         if "--preview" in sys.argv:
             bpy.ops.wm.save_as_mainfile(filepath="/tmp/mh_%s.blend" % gk)

@@ -597,9 +597,12 @@ func update_player(dt: float) -> void:
 		if sprinting:
 			spd = 6.2
 		elif crouching:
-			spd = 1.7 * maxf(0.5, mag_s)
+			spd = 1.25 * maxf(0.5, mag_s)
 		elif weapon:
-			spd = (2.0 if ads else 3.0) * maxf(0.45, mag_s)
+			# armed: full pace forward, slower side-steps and back-pedalling (as in TPS games
+			# and real life - nobody strafes at a jog)
+			var fwd_k := clampf(jy / maxf(mag_s, 0.01), 0.0, 1.0)
+			spd = (1.7 if ads else 2.9) * maxf(0.45, mag_s) * lerpf(0.62, 1.0, fwd_k)
 		else:
 			spd = 3.4 * maxf(0.45, mag_s)
 		if not weapon or sprinting:

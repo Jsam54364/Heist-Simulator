@@ -11,3 +11,8 @@ Fitting, rigging, rest-pose normalisation, garment splitting/recolouring, atlas 
 (hats, helmet, balaclava, vest, duty belt, sunglasses) and all animation clips were made for this
 game in `tools/blender/`. The player and partner faces are projected from the project's own
 reference sheets (`tools/reference/`).
+
+Locomotion and gesture clips are retargeted from the **CMU Graphics Lab Motion Capture Database**
+(http://mocap.cs.cmu.edu), created with funding from NSF EIA-0196217; BVH conversion by Bruce Hahne
+(cgspeed). The database is free for all uses; clips used: 09_01, 16_35, 77_02, 77_29, 102_05, 105_31,
+105_39, 111_19, 111_37, 113_01, 113_17.
